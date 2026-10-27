@@ -70,7 +70,8 @@ def render(src: Path, dest: Path) -> None:
     if dest.exists() and not ours(dest):
         backup(dest)
         say(f"Backed up existing {dest.parent.name}/{dest.name}")
-    dest.write_text(text.rstrip("\n") + f"\n\n{MARKER}\n", encoding="utf-8", newline="\n")
+    with open(dest, "w", encoding="utf-8", newline="\n") as f:   # write_text(newline=) needs 3.10+
+        f.write(text.rstrip("\n") + f"\n\n{MARKER}\n")
 
 
 def load_settings(path: Path) -> dict:

@@ -29,7 +29,13 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name ci
           git config --global init.defaultBranch main
-      - run: pytest -q -rs
+      - name: pytest
+        run: |
+          pytest -q -rs -p no:cacheprovider --tb=line 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          # surface failures as annotations (readable without downloading logs)
+          grep -E "^(FAILED|ERROR) |^E  |Error:" pytest.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+          exit "$status"
 
   windows-powershell:
     # Windows PowerShell 5.1 (what most Windows users have), not just pwsh 7
