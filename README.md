@@ -18,9 +18,16 @@ Plugin commands are namespaced, e.g. `/build-crew:ship`.
 
 **Or manually**, globally for every project, with plain `/ship`-style names:
 ```bash
+# macOS / Linux
 git clone https://github.com/ManeeshJupalle/build-crew && ./build-crew/install.sh
 ```
-You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+ on macOS or Linux (on Windows, use WSL).
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/ManeeshJupalle/build-crew; .\build-crew\install.ps1
+```
+Re-run the same command to upgrade; add `--uninstall` (or `-Uninstall` on Windows) to remove.
+
+**Needs:** Python 3.9+, git, and the [GitHub CLI](https://cli.github.com) (`gh auth login`). macOS, Linux and Windows are all tested in CI. On Windows, install [Git for Windows](https://git-scm.com/download/win) (Claude Code runs commands through its Git Bash) and Python from python.org; the Microsoft Store `python3` stub is detected and skipped.
 
 ## Use
 
@@ -41,28 +48,28 @@ flowchart LR
   PG2 --> C(pr-creator) --> SG{{secret_scan + checks}} --> R(pr-reviewer) --> MG{{merge_gate}}
   MG --> RL(release notes) --> D(deploy) --> H[/you approve production/]
 ```
-Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step below has the same label and a way to verify it yourself. Gate paths are relative to the plugin folder.
+Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step below has the same label and a way to verify it yourself. Gate commands are relative to the build-crew folder; `scripts/py` finds Python on any OS.
 
 1. **Plan:** `AI`
    `architect` writes `docs/HOW_IT_WORKS.md` (≤ 150 lines: picture, steps, decisions, non-goals). `planner` writes `docs/PLAN.md`: small phases, each ending in runnable *Done when* commands.
    Verify: read both files. They're meant for you.
 2. **May this phase start?** `Code`
    `phase_gate.py check` refuses if a dependency isn't done or the working tree is dirty.
-   Verify: `python3 gates/phase_gate.py check 1`
+   Verify: `scripts/py gates/phase_gate.py check 1`
 3. **Build:** `AI`
    Claude builds the phase, following the existing code as the spec.
 4. **Is it done?** `Code`
    `phase_gate.py done` runs the phase's Done-when commands and ticks the box only if they all pass.
-   Verify: `python3 gates/phase_gate.py verify 1`
+   Verify: `scripts/py gates/phase_gate.py verify 1`
 5. **Safe to commit?** `Code`
    `secret_scan.py` scans everything the branch changed since it left the base branch, committed or not, for keys, `.env` files and vendor folders (values are masked). `checks.py` runs the project's own lint, typecheck, tests and build. Missing tools show as SKIPPED, never PASS, and if nothing ran the gate fails as NOT VERIFIED, unless the change is docs-only.
-   Verify: `python3 gates/checks.py --markdown`. The table is pasted into every PR.
+   Verify: `scripts/py gates/checks.py --markdown`. The table is pasted into every PR.
 6. **Review:** `AI`
    `pr-reviewer` has no file-writing tools. It judges what tools can't (logic, security, test quality, fit with your decisions) and posts a verdict pinned to the exact head commit.
    Verify: the review comment on the PR.
 7. **Merge:** `Code`
    `merge_gate.py` merges only if the PR is open and mergeable, the latest verdict is APPROVE *for the current commit* and was posted from your own GitHub account (comments from anyone else are ignored), CI is green (or not configured; "not started yet" counts as pending), and the branch contains the latest base commit. The merge uses `--match-head-commit`, so a late push makes GitHub refuse it.
-   Verify: `python3 gates/merge_gate.py <PR>` (check only).
+   Verify: `scripts/py gates/merge_gate.py <PR>` (check only).
 8. **Release:** `Code` + `AI`
    `next_version.py` computes the SemVer from Conventional Commits. The AI writes release notes a person would want to read, and you approve them.
 9. **Deploy:** `AI` + `Human`
@@ -70,7 +77,7 @@ Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step b
 
 ### Always on: `Code`
 - **Guard hook** (`hooks/guard.py`) parses each shell command, including chained, nested (`bash -c`) and `$(…)` commands, and blocks the destructive things agents actually do: force-push (any spelling), pushes or merges onto protected branches, skipping git hooks (`--no-verify`, `-n`, `HUSKY=0`, `core.hooksPath`), `reset --hard`, `git add -A`, recursive deletes of `/`, `~` or `.`, and merging PRs outside `merge_gate` (CLI, REST or GraphQL). Heredoc commit and PR messages are treated as text, not commands. It fails closed on anything it can't parse. 90+ test cases cover it.
-- **Session hook** (`hooks/session_start.sh`) loads your last `/handoff` and phase progress into every new session.
+- **Session hook** (`hooks/session_start.py`) loads your last `/handoff` and phase progress into every new session.
 
 ## The crew
 
@@ -104,7 +111,7 @@ Gates make the important checks repeatable and visible. They are not a security 
 - **"Read-only" agents still have Bash** to run `gh` and `git`. They have no Write/Edit tools, and their instructions forbid changes, but that part is enforced by the prompt, not by code.
 - **PLAN.md is editable.** A phase is "done" when its Done-when commands pass, but those commands live in a file the AI can edit. The reviewer flags changes to Done-when lines and phase ticks, and they show up in the PR diff.
 - **Production approval** is enforced by the `/deploy` flow asking you. The deployer refuses without it, but that check is in the prompt.
-- Tested on **macOS and Linux**. On Windows, use WSL.
+- The guard needs Python to run. If it can't start, the hook is set to **block** rather than silently allow (manual installs call Python by its absolute path; the plugin finds it via `scripts/py`).
 
 ## Contributing
 

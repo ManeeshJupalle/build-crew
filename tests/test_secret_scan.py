@@ -12,14 +12,14 @@ def feature(repo):
 
 def test_clean_change_passes(repo):
     feature(repo)
-    (repo / "app.py").write_text("import os\nAPI_KEY = os.environ['API_KEY']\n")
+    (repo / "app.py").write_text("import os\nAPI_KEY = os.environ['API_KEY']\n", encoding="utf-8")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 0 and out["findings"] == [] and out["files_scanned"] == 1
 
 
 def test_detects_tokens_and_masks(repo):
     feature(repo)
-    (repo / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\naws = '{FAKE_AWS}'\n")
+    (repo / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\naws = '{FAKE_AWS}'\n", encoding="utf-8")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 1
     issues = {f["issue"] for f in out["findings"]}
@@ -29,7 +29,7 @@ def test_detects_tokens_and_masks(repo):
 
 def test_catches_secret_already_committed_on_branch_without_origin(repo):
     feature(repo)
-    (repo / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\n")
+    (repo / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\n", encoding="utf-8")
     git(repo, "add", "config.py")
     git(repo, "commit", "-q", "-m", "feat: config")
     code, out = run_gate("secret_scan.py", cwd=repo)          # no origin: falls back to local main
@@ -39,7 +39,7 @@ def test_catches_secret_already_committed_on_branch_without_origin(repo):
 def test_works_from_a_subdirectory(repo):
     feature(repo)
     (repo / "src").mkdir()
-    (repo / "src" / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\n")
+    (repo / "src" / "config.py").write_text(f"token = '{FAKE_GH_TOKEN}'\n", encoding="utf-8")
     git(repo, "add", "src/config.py")
     git(repo, "commit", "-q", "-m", "feat: config")
     code, out = run_gate("secret_scan.py", cwd=repo / "src")
@@ -54,9 +54,9 @@ def test_fails_closed_without_a_base(tmp_path):
 
 def test_blocks_secret_files_allows_example(repo):
     feature(repo)
-    (repo / ".env").write_text("X=1\n")
-    (repo / ".env.example").write_text("X=\n")
-    (repo / "server.pem").write_text("x\n")
+    (repo / ".env").write_text("X=1\n", encoding="utf-8")
+    (repo / ".env.example").write_text("X=\n", encoding="utf-8")
+    (repo / "server.pem").write_text("x\n", encoding="utf-8")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 1 and {f["file"] for f in out["findings"]} == {".env", "server.pem"}
 
@@ -64,9 +64,9 @@ def test_blocks_secret_files_allows_example(repo):
 def test_vendor_dirs_blocked_but_nested_build_folders_allowed(repo):
     feature(repo)
     (repo / "node_modules").mkdir()
-    (repo / "node_modules" / "x.js").write_text("x")
+    (repo / "node_modules" / "x.js").write_text("x", encoding="utf-8")
     (repo / "src" / "build").mkdir(parents=True)
-    (repo / "src" / "build" / "steps.py").write_text("x = 1\n")
+    (repo / "src" / "build" / "steps.py").write_text("x = 1\n", encoding="utf-8")
     code, out = run_gate("secret_scan.py", cwd=repo)
     flagged = {f["file"] for f in out["findings"]}
     assert code == 1 and flagged == {"node_modules/x.js"}

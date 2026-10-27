@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Native Windows support: `install.ps1`, a `scripts/py` launcher that finds Python as `python3`, `python` or `py -3` (skipping the Microsoft Store stub), and Windows in CI.
+- Hooks no longer need a shell for manual installs: they run Python by absolute path (exec form), and the guard blocks if it can't start.
+
+### Changed
+- One installer (`scripts/install.py`) behind `install.sh` and `install.ps1`; `uninstall.sh` and `install.ps1 -Uninstall` use it too.
+- Gates read and write UTF-8 explicitly and run project commands through Git Bash on Windows.
 
 ## [0.1.0] - 2026-10-27
 ### Added

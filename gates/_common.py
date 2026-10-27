@@ -9,12 +9,38 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import traceback
+from pathlib import Path
 from typing import Any, Callable
 
-GH = os.environ.get("BUILD_CREW_GH", "gh")  # tests point this at a fake gh
+IS_WINDOWS = os.name == "nt"
+
+
+def _gh_command() -> list[str]:
+    """gh executable; BUILD_CREW_GH overrides it (tests): a JSON list or a shell-style string."""
+    raw = os.environ.get("BUILD_CREW_GH", "gh")
+    if raw.lstrip().startswith("["):
+        return json.loads(raw)
+    return shlex.split(raw, posix=not IS_WINDOWS)
+
+
+def find_bash() -> str | None:
+    """bash for running shell-style command strings. On Windows prefer Git Bash over WSL's System32 bash."""
+    if not IS_WINDOWS:
+        return shutil.which("bash")
+    candidates = []
+    git_exe = shutil.which("git")
+    if git_exe:
+        base = Path(git_exe).resolve().parent.parent          # ...\Git\cmd\git.exe -> ...\Git
+        candidates += [base / "bin" / "bash.exe", base / "usr" / "bin" / "bash.exe"]
+    candidates += [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"]
+    which = shutil.which("bash")
+    if which and "system32" not in which.lower():
+        candidates.insert(0, Path(which))
+    return next((str(c) for c in candidates if c.exists()), None)
 
 
 class GateError(Exception):
@@ -24,9 +50,13 @@ class GateError(Exception):
 def run(cmd: list[str] | str, timeout: int = 900, cwd: str | None = None,
         env: dict | None = None) -> subprocess.CompletedProcess:
     full_env = {**os.environ, "CI": "1", **(env or {})}
+    shell = False
+    if isinstance(cmd, str):          # project commands (Done-when, npm scripts) are written for bash
+        bash = find_bash()
+        cmd, shell = ([bash, "-c", cmd], False) if bash else (cmd, True)
     try:
-        return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True,
-                              timeout=timeout, cwd=cwd, env=full_env)
+        return subprocess.run(cmd, shell=shell, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, cwd=cwd, env=full_env)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout}s")
     except FileNotFoundError as e:
@@ -34,7 +64,7 @@ def run(cmd: list[str] | str, timeout: int = 900, cwd: str | None = None,
 
 
 def gh(*args: str) -> subprocess.CompletedProcess:
-    return run([*shlex.split(GH), *args], timeout=120)
+    return run([*_gh_command(), *args], timeout=120)
 
 
 def gh_json(*args: str) -> Any:

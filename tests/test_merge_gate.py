@@ -28,11 +28,11 @@ BASE = {
 
 def gate(tmp_path, state, *flags, cwd=None):
     sp = tmp_path / "gh.json"
-    sp.write_text(json.dumps(state))
+    sp.write_text(json.dumps(state), encoding="utf-8")
     code, out = run_gate("merge_gate.py", "7", *flags, cwd=cwd or tmp_path,
-                         env={"BUILD_CREW_GH": f"{sys.executable} {FAKE}", "FAKE_GH_STATE": str(sp),
+                         env={"BUILD_CREW_GH": json.dumps([sys.executable, str(FAKE)]), "FAKE_GH_STATE": str(sp),
                               "BUILD_CREW_SLEEP": "0"})
-    return code, out, json.loads(sp.read_text())
+    return code, out, json.loads(sp.read_text(encoding="utf-8"))
 
 
 def variant(**changes):
@@ -96,7 +96,7 @@ def test_no_ci_allowed_by_default_but_can_be_required(tmp_path):
 
 def test_no_checks_yet_is_pending_when_repo_has_workflows(tmp_path, repo):
     (repo / ".github" / "workflows").mkdir(parents=True)
-    (repo / ".github" / "workflows" / "ci.yml").write_text("on:\n  pull_request:\n")
+    (repo / ".github" / "workflows" / "ci.yml").write_text("on:\n  pull_request:\n", encoding="utf-8")
     code, out, st = gate(tmp_path, variant(checks=None), "--merge", cwd=repo)
     assert code == 1 and "hasn't started" in out["gates"]["ci"]["detail"] and not merged(st)
 
@@ -108,6 +108,6 @@ def test_missing_gh_fails_closed_with_json(tmp_path):
 
 def test_push_only_workflows_dont_block_forever(tmp_path, repo):
     (repo / ".github" / "workflows").mkdir(parents=True)
-    (repo / ".github" / "workflows" / "deploy.yml").write_text("on:\n  workflow_dispatch:\n  push:\n    tags: ['v*']\n")
+    (repo / ".github" / "workflows" / "deploy.yml").write_text("on:\n  workflow_dispatch:\n  push:\n    tags: ['v*']\n", encoding="utf-8")
     code, out, _ = gate(tmp_path, variant(checks=None), cwd=repo)
     assert code == 0 and "NO CI" in out["gates"]["ci"]["detail"]

@@ -11,7 +11,7 @@ COMMANDS = sorted((ROOT / "commands").glob("*.md"))
 
 
 def frontmatter(path):
-    m = re.match(r"---\n(.*?)\n---\n", path.read_text(), re.S)
+    m = re.match(r"---\n(.*?)\n---\n", path.read_text(encoding="utf-8"), re.S)
     assert m, f"{path.name}: missing frontmatter"
     return dict(line.split(":", 1) for line in m.group(1).splitlines() if ":" in line)
 
@@ -31,14 +31,16 @@ def test_command_frontmatter(path):
 
 @pytest.mark.parametrize("path", AGENTS + COMMANDS, ids=lambda p: p.name)
 def test_references_resolve(path):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for agent in re.findall(r"`build-crew:([a-z-]+)`", text):
         assert (ROOT / "agents" / f"{agent}.md").exists(), f"{path.name} references missing agent {agent}"
     for gate in re.findall(r"gates/([a-z_]+\.py)", text):
         assert (ROOT / "gates" / gate).exists(), f"{path.name} references missing gate {gate}"
-    # shell variables don't survive between Claude's Bash calls: gates must be called by full path
-    for call in re.findall(r"python3 \"?([^\s\"`]+\.py)", text):
-        assert call.startswith("${CLAUDE_PLUGIN_ROOT}/gates/"), f"{path.name}: gate called as {call}"
+    # gates go through the launcher (finds Python on any OS) by full path:
+    # shell variables don't survive between Claude's Bash calls
+    assert "python3 " not in text, f"{path.name}: call gates via scripts/py, not python3 (Windows has no python3)"
+    for call in re.findall(r'bash "([^"]+)" gates/', text):
+        assert call == "${CLAUDE_PLUGIN_ROOT}/scripts/py", f"{path.name}: gate launched via {call}"
 
 
 def test_non_editing_agents_have_no_write_tools():
@@ -48,12 +50,15 @@ def test_non_editing_agents_have_no_write_tools():
 
 
 def test_plugin_manifests():
-    plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
-    market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
+    plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
+    market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     assert plugin["name"] == "build-crew" == market["plugins"][0]["name"]
-    hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
+    hooks = json.loads((ROOT / "hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]
     for entries in hooks.values():
         for e in entries:
             for h in e["hooks"]:
-                rel = re.search(r"/(hooks/[\w.]+)", h["command"]).group(1)
+                assert "scripts/py" in h["command"], "hooks must go through the Python launcher"
+                rel = re.search(r"\s(hooks/[\w.]+)", h["command"]).group(1)
                 assert (ROOT / rel).exists()
+    guard = hooks["PreToolUse"][0]["hooks"][0]
+    assert guard.get("onFailure") == "block", "the guard must fail closed if it can't start"

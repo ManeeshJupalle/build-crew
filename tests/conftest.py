@@ -17,7 +17,7 @@ HOOKS = ROOT / "hooks"
 
 
 def run_gate(name: str, *args: str, cwd: Path | None = None, env: dict | None = None) -> tuple[int, dict]:
-    res = subprocess.run([sys.executable, str(GATES / name), *args], cwd=cwd, capture_output=True, text=True,
+    res = subprocess.run([sys.executable, str(GATES / name), *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                          env={**os.environ, **(env or {})}, timeout=60)
     try:
         out = json.loads(res.stdout)
@@ -36,7 +36,7 @@ def repo(tmp_path: Path) -> Path:
     git(tmp_path, "config", "user.email", "test@example.com")
     git(tmp_path, "config", "user.name", "test")
     git(tmp_path, "config", "commit.gpgsign", "false")
-    (tmp_path / "README.md").write_text("# test\n")
+    (tmp_path / "README.md").write_text("# test\n", encoding="utf-8")
     git(tmp_path, "add", "README.md")
     git(tmp_path, "commit", "-q", "-m", "chore: init")
     return tmp_path

@@ -30,7 +30,7 @@ def node_checks(root: Path) -> list[tuple[str, str, str]]:
     pkg = root / "package.json"
     if not pkg.exists():
         return []
-    scripts = json.loads(pkg.read_text() or "{}").get("scripts", {})
+    scripts = json.loads(pkg.read_text(encoding="utf-8") or "{}").get("scripts", {})
     pm = ("pnpm" if (root / "pnpm-lock.yaml").exists() else
           "yarn" if (root / "yarn.lock").exists() else
           "bun" if (root / "bun.lockb").exists() or (root / "bun.lock").exists() else "npm")
@@ -40,9 +40,9 @@ def node_checks(root: Path) -> list[tuple[str, str, str]]:
 def python_tool(root: Path, tool: str) -> str:
     """Prefer the project's virtualenv over whatever is on PATH."""
     for venv in (".venv", "venv"):
-        cand = root / venv / ("Scripts" if os.name == "nt" else "bin") / tool
+        cand = root / venv / ("Scripts" if os.name == "nt" else "bin") / (tool + (".exe" if os.name == "nt" else ""))
         if cand.exists():
-            return str(cand)
+            return cand.as_posix()
     return tool
 
 
@@ -50,7 +50,7 @@ def python_checks(root: Path) -> list[tuple[str, str, str]]:
     py = root / "pyproject.toml"
     if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists()):
         return []
-    cfg = py.read_text() if py.exists() else ""
+    cfg = py.read_text(encoding="utf-8") if py.exists() else ""
     out = []
     if "[tool.ruff" in cfg or (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
         t = python_tool(root, "ruff")
@@ -82,7 +82,7 @@ def make_checks(root: Path) -> list[tuple[str, str, str]]:
     mk = root / "Makefile"
     if not mk.exists():
         return []
-    targets = set(re.findall(r"^([A-Za-z][\w-]*):", mk.read_text(), re.M))
+    targets = set(re.findall(r"^([A-Za-z][\w-]*):", mk.read_text(encoding="utf-8"), re.M))
     return [(t, f"make {t}", "make") for t in ("lint", "test") if t in targets]
 
 

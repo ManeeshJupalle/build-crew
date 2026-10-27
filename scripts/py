@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Run a build-crew Python file with whatever Python 3.9+ this machine has.
+#   scripts/py <path relative to the build-crew folder> [args...]
+# Tries python3, python, then the Windows launcher `py -3`, and skips the
+# Microsoft Store "python3" stub (it exists but can't run code).
+# If no usable Python is found it exits 2, so a guard hook fails closed.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+target="$1"; shift || true
+
+for candidate in "python3" "python" "py -3"; do
+  # shellcheck disable=SC2086  # "py -3" must split into two words
+  if $candidate -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    exec $candidate "$here/$target" "$@"
+  fi
+done
+
+echo "build-crew: Python 3.9+ not found (tried python3, python, py -3). Install it from https://www.python.org/downloads/ and restart Claude Code." >&2
+exit 2

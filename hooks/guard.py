@@ -241,7 +241,7 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
     seg = strip_prefix(seg)
     if not seg:
         return None
-    prog = os.path.basename(seg[0])
+    prog = re.sub(r"\.exe$", "", os.path.basename(seg[0].replace("\\", "/")).lower())
     args = seg[1:]
     if prog in SHELLS:
         for k, a in enumerate(args):
@@ -281,7 +281,7 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
 
 def main() -> int:
     try:
-        data = json.load(sys.stdin)
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except Exception:
         print("BLOCKED by build-crew guard: unreadable hook input.", file=sys.stderr)
         return 2
@@ -290,7 +290,8 @@ def main() -> int:
     cmd = (data.get("tool_input") or {}).get("command", "")
     reason = check(cmd)
     if reason:
-        print(f"BLOCKED by build-crew guard: {reason}\nCommand: {cmd.strip()[:300]}", file=sys.stderr)
+        msg = f"BLOCKED by build-crew guard: {reason}\nCommand: {cmd.strip()[:300]}\n"
+        sys.stderr.buffer.write(msg.encode("utf-8"))
         return 2
     return 0
 

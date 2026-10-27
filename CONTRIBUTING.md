@@ -17,6 +17,7 @@ agents/      AI judgment: one job per agent, Markdown + frontmatter
 commands/    slash commands that wire agents and gates together
 gates/       code that decides pass/fail; prints one JSON object, exit 0 or 1
 hooks/       guard (blocks dangerous commands) + session start (loads handoff)
+scripts/     py (finds Python on any OS) + install.py (behind install.sh / install.ps1)
 tests/       pytest for every gate, the guard, install/uninstall, plus layout checks
 examples/    sample HOW_IT_WORKS.md and PLAN.md
 ```
@@ -33,12 +34,13 @@ examples/    sample HOW_IT_WORKS.md and PLAN.md
 - Include a **Code vs AI** section: what gates already decide, and what this agent judges.
 - Agents that shouldn't change code (reviewer, researcher, deployer) don't get `Write`/`Edit` tools. A test enforces this; their Bash use is limited by their instructions.
 - End with a fixed-format report block, so other steps can parse it.
-- Reference gates as `${CLAUDE_PLUGIN_ROOT}/gates/<gate>.py` and other agents as `` `build-crew:<name>` ``. `install.sh` rewrites both for manual installs.
+- Call gates as `bash "${CLAUDE_PLUGIN_ROOT}/scripts/py" gates/<gate>.py` (never `python3`: Windows doesn't have it) and other agents as `` `build-crew:<name>` ``. The manual installer rewrites both.
+- Read and write files with `encoding="utf-8"`: Windows defaults to a different encoding and breaks on characters like `—`.
 
 ## Extending `checks.py` to a new stack
 Add a `<stack>_checks(root)` that returns `(name, command, tool)` tuples and add it to `detect()`, plus a test.
 
 ## Pull requests
 - Conventional Commit titles (`feat(gates): …`, `fix(guard): …`). `next_version.py` uses them to pick the next version.
-- CI must be green: tests on Linux and macOS, shellcheck, and plugin validation.
+- CI must be green: tests on Linux, macOS and Windows, a Windows PowerShell 5.1 install check, shellcheck, and plugin validation.
 - Keep docs short. If the code already says it clearly, don't repeat it in Markdown.
