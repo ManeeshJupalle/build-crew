@@ -62,3 +62,16 @@ def test_plugin_manifests():
                 assert (ROOT / rel).exists()
     guard = hooks["PreToolUse"][0]["hooks"][0]
     assert guard.get("onFailure") == "block", "the guard must fail closed if it can't start"
+
+
+def test_all_python_file_io_is_explicit_utf8():
+    """Windows defaults to its own code page; every text read/write must say utf-8."""
+    offenders = []
+    for folder in ("gates", "hooks", "scripts", "tests"):
+        for f in (ROOT / folder).glob("*.py"):
+            lines = f.read_text(encoding="utf-8").splitlines()
+            for n, line in enumerate(lines):
+                call = " ".join(lines[n:n + 3])            # calls may wrap onto following lines
+                if re.search(r"\.(read_text|write_text)\(", line) and "encoding" not in call:
+                    offenders.append(f"{folder}/{f.name}:{n + 1}")
+    assert not offenders, "missing encoding=: " + ", ".join(offenders)

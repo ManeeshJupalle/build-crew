@@ -83,7 +83,7 @@ def test_verify_refuses_guard_blocked_commands(repo):
 def test_example_plan_parses(repo):
     from conftest import ROOT
     (repo / "docs").mkdir()
-    (repo / "docs" / "PLAN.md").write_text((ROOT / "examples" / "PLAN.md").read_text(encoding="utf-8"))
+    (repo / "docs" / "PLAN.md").write_text((ROOT / "examples" / "PLAN.md").read_text(encoding="utf-8"), encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "docs: plan")
     env = {"CLAUDE_PROJECT_DIR": str(repo)}
@@ -118,3 +118,12 @@ def test_slow_done_when_fails_with_json(repo, monkeypatch):
     code, out = run_gate("phase_gate.py", "verify", "1", cwd=repo,
                          env={"CLAUDE_PROJECT_DIR": str(repo), "BUILD_CREW_DONE_WHEN_TIMEOUT": "1"})
     assert code == 1 and out["commands"][0]["status"] == "FAIL"
+
+
+def test_plan_saved_in_windows_code_page_still_parses(repo):
+    (repo / "docs").mkdir()
+    (repo / "docs" / "PLAN.md").write_bytes(PLAN.encode("cp1252"))   # "—" as 0x97, not UTF-8
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "docs: plan")
+    code, out = run_gate("phase_gate.py", "next", cwd=repo, env={"CLAUDE_PROJECT_DIR": str(repo)})
+    assert code == 0 and out["phase"] == "1"

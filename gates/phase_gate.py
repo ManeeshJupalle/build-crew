@@ -38,7 +38,11 @@ def load() -> tuple[str, dict]:
     p = plan_path()
     if not p.exists():
         emit({"gate": "phase", "error": "docs/PLAN.md not found: run /kickoff first"}, False)
-    text = p.read_text(encoding="utf-8")
+    raw = p.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:   # e.g. saved by Notepad in the Windows code page
+        text = raw.decode("cp1252", errors="replace")
     phases = {m.group(2): {"done": m.group(1) in "xX", "name": m.group(3).strip()}
               for m in PROGRESS_RE.finditer(text)}
     return text, phases
