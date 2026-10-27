@@ -37,6 +37,10 @@ jobs:
           cat pytest.log
           # surface failures as annotations (readable without downloading logs)
           grep -E "^(FAILED|ERROR) " pytest.log | head -10 | while IFS= read -r l; do echo "::error::$l"; done
+          if [ "$status" -ne 0 ]; then
+            grep -E "^E |Error|error:" pytest.log | head -10 | while IFS= read -r l; do echo "::warning::$l"; done
+            tail -n 10 pytest.log | while IFS= read -r l; do echo "::notice::$l"; done
+          fi
           exit "$status"
 
   windows-powershell:
