@@ -66,12 +66,13 @@ def test_plugin_manifests():
 
 def test_all_python_file_io_is_explicit_utf8():
     """Windows defaults to its own code page; every text read/write must say utf-8."""
+    import ast
     offenders = []
     for folder in ("gates", "hooks", "scripts", "tests"):
         for f in (ROOT / folder).glob("*.py"):
-            lines = f.read_text(encoding="utf-8").splitlines()
-            for n, line in enumerate(lines):
-                call = " ".join(lines[n:n + 3])            # calls may wrap onto following lines
-                if re.search(r"\.(read_text|write_text)\(", line) and "encoding" not in call:
-                    offenders.append(f"{folder}/{f.name}:{n + 1}")
+            for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in ("read_text", "write_text")
+                        and not any(k.arg == "encoding" for k in node.keywords)):
+                    offenders.append(f"{folder}/{f.name}:{node.lineno}")
     assert not offenders, "missing encoding=: " + ", ".join(offenders)
