@@ -6,11 +6,11 @@ import subprocess
 
 import pytest
 
-from conftest import ROOT
+from conftest import BASH, ROOT
 
 
 def sh(script, home):
-    return subprocess.run(["bash", str(ROOT / script)], env={**os.environ, "HOME": str(home)},
+    return subprocess.run([BASH, str(ROOT / script)], env={**os.environ, "HOME": str(home)},
                           capture_output=True, text=True)
 
 

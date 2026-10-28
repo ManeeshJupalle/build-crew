@@ -1,14 +1,11 @@
 import json
 import os
-import shutil
 import subprocess
 import sys
 
 import pytest
 
-from conftest import HOOKS, ROOT
-
-BASH = shutil.which("bash")
+from conftest import BASH, HOOKS, ROOT
 
 BLOCKED = [
     # force push, every spelling

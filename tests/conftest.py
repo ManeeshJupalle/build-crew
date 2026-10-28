@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,8 @@ os.environ.setdefault("BUILD_CREW_GH", "false")
 ROOT = Path(__file__).resolve().parent.parent
 GATES = ROOT / "gates"
 HOOKS = ROOT / "hooks"
+# Looked up on PATH: on Windows, a bare "bash" finds System32's WSL launcher before Git Bash.
+BASH = shutil.which("bash")
 
 
 def run_gate(name: str, *args: str, cwd: Path | None = None, env: dict | None = None) -> tuple[int, dict]:
