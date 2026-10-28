@@ -1,0 +1,2 @@
+# Test-only. build-crew itself is standard-library Python.
+pytest
