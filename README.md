@@ -16,11 +16,19 @@ Agents read the code. The few docs that exist are for people who want to underst
 ```
 Plugin commands are namespaced, e.g. `/build-crew:ship`.
 
-**Or manually**, globally for every project, with plain `/ship`-style names:
+**Or manually**, globally for every project, with plain `/ship`-style names.
+
+macOS / Linux:
 ```bash
-git clone https://github.com/ManeeshJupalle/build-crew && ./build-crew/install.sh
+git clone https://github.com/ManeeshJupalle/build-crew ~/build-crew && ~/build-crew/install.sh
 ```
-You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+ on macOS or Linux (on Windows, use WSL).
+Windows (PowerShell):
+```powershell
+git clone https://github.com/ManeeshJupalle/build-crew $HOME\build-crew; powershell -ExecutionPolicy Bypass -File $HOME\build-crew\install.ps1
+```
+To update, pull and re-run: `git -C ~/build-crew pull && ~/build-crew/install.sh` (on Windows, `git -C $HOME\build-crew pull` then the `install.ps1` line). Re-running is safe: files you wrote yourself are backed up, never overwritten, and only build-crew's own hook entries in `settings.json` change. The installers copy rather than symlink because they fill in your install path. To remove a manual install, run `uninstall.sh` or `uninstall.ps1` the same way.
+
+You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+. On Windows, `install.ps1` finds Python as `python3`, `py -3` or `python`, and runs the session hook with Git Bash (part of Git for Windows, which Claude Code needs anyway).
 
 ## Use
 
@@ -104,7 +112,7 @@ Gates make the important checks repeatable and visible. They are not a security 
 - **"Read-only" agents still have Bash** to run `gh` and `git`. They have no Write/Edit tools, and their instructions forbid changes, but that part is enforced by the prompt, not by code.
 - **PLAN.md is editable.** A phase is "done" when its Done-when commands pass, but those commands live in a file the AI can edit. The reviewer flags changes to Done-when lines and phase ticks, and they show up in the PR diff.
 - **Production approval** is enforced by the `/deploy` flow asking you. The deployer refuses without it, but that check is in the prompt.
-- Tested on **macOS and Linux**. On Windows, use WSL.
+- The gates and guard are tested on **macOS and Linux**. On Windows, `install.ps1` is tested in CI, but the gates and guard aren't yet, so WSL is the safest route there.
 
 ## Contributing
 

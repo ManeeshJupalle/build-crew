@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `install.ps1` / `uninstall.ps1` for manual global installs on Windows, tested in CI on Windows PowerShell 5.1 and PowerShell 7.
+- `.gitattributes` keeps shell scripts on LF line endings, so hooks run from Windows checkouts.
 
 ## [0.1.0] - 2026-10-27
 ### Added

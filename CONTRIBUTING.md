@@ -33,7 +33,7 @@ examples/    sample HOW_IT_WORKS.md and PLAN.md
 - Include a **Code vs AI** section: what gates already decide, and what this agent judges.
 - Agents that shouldn't change code (reviewer, researcher, deployer) don't get `Write`/`Edit` tools. A test enforces this; their Bash use is limited by their instructions.
 - End with a fixed-format report block, so other steps can parse it.
-- Reference gates as `${CLAUDE_PLUGIN_ROOT}/gates/<gate>.py` and other agents as `` `build-crew:<name>` ``. `install.sh` rewrites both for manual installs.
+- Reference gates as `${CLAUDE_PLUGIN_ROOT}/gates/<gate>.py` and other agents as `` `build-crew:<name>` ``. `install.sh` and `install.ps1` rewrite both for manual installs.
 
 ## Extending `checks.py` to a new stack
 Add a `<stack>_checks(root)` that returns `(name, command, tool)` tuples and add it to `detect()`, plus a test.

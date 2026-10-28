@@ -27,6 +27,23 @@ jobs:
           git config --global user.name ci
       - run: pytest -q
 
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest
+      - name: install.ps1 on Windows PowerShell 5.1
+        run: pytest -q tests/test_install_ps1.py
+        env:
+          BUILD_CREW_PS: powershell
+      - name: install.ps1 on PowerShell 7
+        run: pytest -q tests/test_install_ps1.py
+        env:
+          BUILD_CREW_PS: pwsh
+
   lint:
     runs-on: ubuntu-latest
     steps:
