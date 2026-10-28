@@ -11,7 +11,7 @@ from conftest import BASH, ROOT
 
 def sh(script, home):
     return subprocess.run([BASH, str(ROOT / script)], env={**os.environ, "HOME": str(home)},
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=60)
 
 
 @pytest.fixture

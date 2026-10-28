@@ -16,6 +16,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash   # Git Bash on Windows, the shell Claude Code runs hooks and commands in there

@@ -16,7 +16,9 @@ MARKER="<!-- installed by build-crew -->"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BK="$ROOT/backup-$STAMP"
 
-bash "$KIT/run.sh" - </dev/null >/dev/null || exit 1   # run.sh says which Python is missing
+# run.sh says which Python is missing. <<<'' rather than </dev/null: Windows' NUL device looks like a terminal,
+# so Python 3.13+ would open its interactive prompt and wait forever.
+bash "$KIT/run.sh" - <<<'' >/dev/null || exit 1
 command -v gh >/dev/null || echo "⚠️  GitHub CLI not found: install it from https://cli.github.com before using /ship"
 
 mkdir -p "$CLAUDE/agents" "$CLAUDE/commands" "$ROOT"
