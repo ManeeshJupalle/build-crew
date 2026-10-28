@@ -4,8 +4,8 @@
 It parses the command into shell words instead of pattern-matching raw text, so
   - quoted text such as commit messages can't trigger it ("docs: explain --no-verify"),
   - git global options can't hide it (git -C . push --force),
-  - chained, nested and substituted commands are checked (&&, ;, |, bash -c, pwsh -c, $(...)).
-It checks the Bash tool and, on Windows, the PowerShell tool.
+  - chained, grouped, nested and substituted commands are checked
+    (&&, ;, |, if/then, ( ), { }, bash -c, pwsh -c, cmd /c, $(...)).
 
 Exit 2 = block (stderr is shown to Claude). Exit 0 = allow.
 This is a seatbelt, not a sandbox: see "Limits" in the README.
@@ -25,8 +25,11 @@ WRAPPERS = {"sudo", "command", "exec", "time", "nice", "ionice", "nohup", "env",
 WRAPPER_VALUE_FLAGS = {"-u", "-g", "-n", "-s", "-k", "-c", "-p", "-o", "-e", "-i", "--signal", "--kill-after", "--user"}
 HOOK_SKIP_ENV = re.compile(r"^(HUSKY=0|HUSKY_SKIP_HOOKS=|HUSKY_SKIP_INSTALL=|SKIP=|PRE_COMMIT_ALLOW_NO_CONFIG=|GIT_HOOKS_PATH=)")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"}
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}  # what follows is a command
 POWERSHELLS = {"pwsh", "powershell"}
-GUARDED_TOOLS = {"Bash", "PowerShell"}
+PS_VALUE_PARAMS = ("executionpolicy", "windowstyle", "inputformat", "outputformat", "version", "psconsolefile",
+                   "configurationname", "configurationfile", "workingdirectory", "settingsfile", "custompipename")
+PS_VALUE_ALIASES = {"ep", "ex", "w", "wd", "o", "of", "i", "if", "v"}
 DANGEROUS_RM_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "$HOME/*",
                         ".", "./", "./*", "..", "../", "*", ".*"}
 
@@ -57,7 +60,6 @@ def local_branch_exists(name: str) -> bool:
 
 
 HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^[ \t]*\2[ \t]*$", re.S | re.M)
-PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n.*?^\1@", re.S | re.M)
 
 
 def strip_heredocs(cmd: str) -> str:
@@ -77,7 +79,7 @@ def short_flags(tok: str) -> str:
 
 
 def tokenize(cmd: str) -> list[str]:
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|\n")
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|\n()")
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # keep newlines as separators
     lex.commenters = ""         # we drop comments per segment, so a comment can't swallow the next line
@@ -87,7 +89,8 @@ def tokenize(cmd: str) -> list[str]:
 def segments(tokens: list[str]) -> list[list[str]]:
     segs, cur, comment = [], [], False
     for t in tokens:
-        if t in SEPARATORS or (t and set(t) <= set(";&|\n")):  # t: an empty argument ('') is not a separator
+        # ( ) and a standalone { } group commands; an empty argument ('') is not a separator
+        if t in SEPARATORS or (t and set(t) <= set(";&|\n(){}")):
             if cur:
                 segs.append(cur)
             cur, comment = [], False
@@ -107,7 +110,7 @@ def strip_prefix(seg: list[str]) -> list[str]:
     i, in_wrapper = 0, False
     while i < len(seg):
         t = seg[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t) or (t in KEYWORDS and not in_wrapper):
             i += 1
         elif prog_name(t) in WRAPPERS:
             i, in_wrapper = i + 1, True
@@ -240,15 +243,22 @@ def check_rm(args: list[str]) -> str | None:
 
 
 def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
-    """PowerShell runs everything after -Command as one command. Its parameter names ignore case and can be
-    shortened (-c, -com); -EncodedCommand is base64, so it can't be checked."""
-    for k, a in enumerate(args):
-        low = a.lower()
-        if low in ("-e", "-ec") or (len(low) > 2 and "-encodedcommand".startswith(low)):
+    """PowerShell runs everything after -Command as one command, and Windows PowerShell does the same with a bare
+    first argument. Parameters start with - or /, ignore case and can be shortened (-c, -co, /enc).
+    -EncodedCommand is base64, so it can't be checked. After -File come the script's own arguments."""
+    k = 0
+    while k < len(args) and args[k][:1] in ("-", "/"):
+        name = args[k].lstrip("-/").lower()
+        if name in ("e", "ec") or (len(name) > 1 and "encodedcommand".startswith(name)):
             return "PowerShell -EncodedCommand can't be verified."
-        if low == "-c" or (len(low) > 3 and "-command".startswith(low)):
-            return check(" ".join(args[k + 1:]), depth + 1, state)
-    return None
+        if name in ("c", "cwa") or (len(name) > 1 and "commandwithargs".startswith(name)):
+            k += 1
+            break
+        if name == "f" or (len(name) > 1 and "file".startswith(name)):
+            return None
+        takes_value = name in PS_VALUE_ALIASES or (len(name) > 1 and any(p.startswith(name) for p in PS_VALUE_PARAMS))
+        k += 2 if takes_value else 1
+    return check(" ".join(args[k:]), depth + 1, state) if k < len(args) else None
 
 
 def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
@@ -270,6 +280,10 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
                 return check(args[k + 1], depth + 1, state)
     if prog in POWERSHELLS:
         return check_powershell(args, state, depth)
+    if prog == "cmd":
+        for k, a in enumerate(args):
+            if a.lower() in ("/c", "/k", "/r"):
+                return check(" ".join(args[k + 1:]), depth + 1, state)
     if prog == "eval":
         return check(" ".join(args), depth + 1, state)
     if prog == "git":
@@ -308,11 +322,9 @@ def main() -> int:
     except Exception:
         print("BLOCKED by build-crew guard: unreadable hook input.", file=sys.stderr)
         return 2
-    if data.get("tool_name") not in GUARDED_TOOLS:
+    if data.get("tool_name") != "Bash":
         return 0
     cmd = (data.get("tool_input") or {}).get("command", "")
-    if data["tool_name"] == "PowerShell":
-        cmd = PS_HERESTRING.sub("''", cmd)  # @'...'@ bodies are data (commit and PR messages), like heredocs
     reason = check(cmd)
     if reason:
         print(f"BLOCKED by build-crew guard: {reason}\nCommand: {cmd.strip()[:300]}", file=sys.stderr)

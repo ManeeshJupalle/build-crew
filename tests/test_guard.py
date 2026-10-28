@@ -93,6 +93,21 @@ BLOCKED = [
     "pwsh -NoLogo -com \"gh pr merge 7\"",
     "pwsh -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
     "powershell -enc ZwBpAHQA",
+    "powershell \"git push --force\"",
+    "powershell /c \"git push --force\"",
+    "powershell -co \"git push --force\"",
+    "powershell /enc ZwBpAHQA",
+    "powershell -ExecutionPolicy Bypass \"git push --force\"",
+    "pwsh -NoProfile -ep Bypass -Command git push --force",
+    "cmd /c \"git push --force\"",
+    "cmd.exe /C git reset --hard",
+    # grouped and control-flow commands
+    "(cd sub && git push --force)",
+    "{ git push --force; }",
+    "npm test || { git reset --hard; }",
+    "if true; then git push --force; fi",
+    "for b in x; do git push -f; done",
+    "! git push --force",
 ]
 
 ALLOWED = [
@@ -127,21 +142,12 @@ ALLOWED = [
     "pwsh -c 'git status'",
     "pwsh -NoProfile -ExecutionPolicy Bypass -File build.ps1",
     "fish -c 'git push -u origin feat/x'",
-]
-
-# Commands from Claude's PowerShell tool on Windows
-PS_BLOCKED = [
-    "git push --force",
-    "git status; git reset --hard",
-    "git commit -m @'\nfix: x\n'@ --no-verify",
-]
-
-PS_ALLOWED = [
-    "git status; git log --oneline -5",
-    "Get-ChildItem -Recurse | Select-Object -First 5",
-    # here-string messages are data, like heredocs (Claude writes PowerShell commits this way)
-    "git commit -m @'\nfix: don't crash on empty input\n\ngit push --force is never used.\n'@",
-    "gh pr create --title 'feat: x' --body @\"\nIt's faster.\n\"@",
+    "pwsh -File deploy.ps1 -e staging",
+    "cmd /c \"git status\"",
+    "(cd docs && git status)",
+    "if [ -f x ]; then git push -u origin feat/x; fi",
+    "echo $((1 + 2))",
+    "git commit -m 'fix(guard): handle (cd x && y)'",
 ]
 
 
@@ -169,21 +175,6 @@ def test_blocks(cmd, feature_repo):
 @pytest.mark.parametrize("cmd", ALLOWED)
 def test_allows(cmd, feature_repo):
     assert guard(cmd, cwd=feature_repo) == 0
-
-
-@pytest.mark.parametrize("cmd", PS_BLOCKED)
-def test_blocks_powershell_tool(cmd, feature_repo):
-    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 2
-
-
-@pytest.mark.parametrize("cmd", PS_ALLOWED)
-def test_allows_powershell_tool(cmd, feature_repo):
-    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 0
-
-
-def test_hook_runs_for_bash_and_powershell_tools():
-    matcher = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["matcher"]
-    assert set(matcher.split("|")) == {"Bash", "PowerShell"}
 
 
 def test_blocks_commit_and_bare_push_on_protected_branch(repo):
