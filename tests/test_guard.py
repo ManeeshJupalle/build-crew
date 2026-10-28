@@ -81,6 +81,18 @@ BLOCKED = [
     "git.exe push --force",
     "\"/c/Program Files/Git/cmd/git.exe\" push --force",
     "GH.EXE pr merge 7",
+    # an empty argument must not split the command
+    "git commit -m '' --no-verify",
+    "git push origin \"\" --force",
+    # other shells
+    "fish -c 'git push --force'",
+    "ksh -c 'git reset --hard'",
+    "zsh --command 'git push -f'",
+    "pwsh -c 'git push --force'",
+    "powershell.exe -NoProfile -Command git push --force",
+    "pwsh -NoLogo -com \"gh pr merge 7\"",
+    "pwsh -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
+    "powershell -enc ZwBpAHQA",
 ]
 
 ALLOWED = [
@@ -112,6 +124,24 @@ ALLOWED = [
     "timeout 120 npm test",
     "git checkout -- src/app.ts",
     "git commit -m 'fix: 修复 naïve — ✓'",
+    "pwsh -c 'git status'",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File build.ps1",
+    "fish -c 'git push -u origin feat/x'",
+]
+
+# Commands from Claude's PowerShell tool on Windows
+PS_BLOCKED = [
+    "git push --force",
+    "git status; git reset --hard",
+    "git commit -m @'\nfix: x\n'@ --no-verify",
+]
+
+PS_ALLOWED = [
+    "git status; git log --oneline -5",
+    "Get-ChildItem -Recurse | Select-Object -First 5",
+    # here-string messages are data, like heredocs (Claude writes PowerShell commits this way)
+    "git commit -m @'\nfix: don't crash on empty input\n\ngit push --force is never used.\n'@",
+    "gh pr create --title 'feat: x' --body @\"\nIt's faster.\n\"@",
 ]
 
 
@@ -139,6 +169,21 @@ def test_blocks(cmd, feature_repo):
 @pytest.mark.parametrize("cmd", ALLOWED)
 def test_allows(cmd, feature_repo):
     assert guard(cmd, cwd=feature_repo) == 0
+
+
+@pytest.mark.parametrize("cmd", PS_BLOCKED)
+def test_blocks_powershell_tool(cmd, feature_repo):
+    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 2
+
+
+@pytest.mark.parametrize("cmd", PS_ALLOWED)
+def test_allows_powershell_tool(cmd, feature_repo):
+    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 0
+
+
+def test_hook_runs_for_bash_and_powershell_tools():
+    matcher = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["matcher"]
+    assert set(matcher.split("|")) == {"Bash", "PowerShell"}
 
 
 def test_blocks_commit_and_bare_push_on_protected_branch(repo):

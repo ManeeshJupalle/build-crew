@@ -89,7 +89,7 @@ def ours(h):  # one hook handler
 
 hooks = s.setdefault("hooks", {})
 mine = {
-    "PreToolUse": {"matcher": "Bash", "hooks": [{"type": "command", "command": f'bash "{root}/run.sh" hooks/guard.py'}]},
+    "PreToolUse": {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": f'bash "{root}/run.sh" hooks/guard.py'}]},
     "SessionStart": {"hooks": [{"type": "command", "command": f'bash "{root}/hooks/session_start.sh"'}]},
 }
 for event, entry in mine.items():
