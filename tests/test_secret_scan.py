@@ -3,6 +3,9 @@ from conftest import git, run_gate
 # Built at runtime so this file never contains a real-looking secret itself.
 FAKE_GH_TOKEN = "ghp_" + "Ab3" * 12
 FAKE_AWS = "AKIA" + "ABCDEFGHIJKLMNOP"
+FAKE_GITLAB = "glpat-" + "Ab3_" * 5
+FAKE_NPM = "npm_" + "Ab3" * 12
+FAKE_HF = "hf_" + "AbCd" * 8 + "Ef"
 
 
 def feature(repo):
@@ -25,6 +28,36 @@ def test_detects_tokens_and_masks(repo):
     issues = {f["issue"] for f in out["findings"]}
     assert "GitHub token" in issues and "AWS access key" in issues
     assert all(FAKE_GH_TOKEN not in str(f) for f in out["findings"]), "values must be masked"
+
+
+def test_detects_gitlab_npm_and_hugging_face_tokens(repo):
+    feature(repo)
+    (repo / "ci.sh").write_text(f"GL={FAKE_GITLAB}\nNPM={FAKE_NPM}\nHF={FAKE_HF}\n")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 1
+    assert {f["issue"] for f in out["findings"]} == {"GitLab token", "npm token", "Hugging Face token"}
+    assert all(t not in str(out) for t in (FAKE_GITLAB, FAKE_NPM, FAKE_HF)), "values must be masked"
+
+
+def test_near_miss_prefixes_pass(repo):
+    feature(repo)
+    (repo / "ci.sh").write_text(f"x = 'hf_short'\ny = '{FAKE_GITLAB[:-1]}'\nz = 'npm_config_cache'\n")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 0 and out["findings"] == []
+
+
+def test_npm_token_one_char_short_passes(repo):
+    feature(repo)
+    (repo / "ci.sh").write_text(f"x = '{FAKE_NPM[:-1]}'\n")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 0 and out["findings"] == []
+
+
+def test_hf_token_one_char_short_passes(repo):
+    feature(repo)
+    (repo / "ci.sh").write_text(f"x = '{FAKE_HF[:-1]}'\n")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 0 and out["findings"] == []
 
 
 def test_catches_secret_already_committed_on_branch_without_origin(repo):
