@@ -90,7 +90,8 @@ def repo_has_pr_workflows() -> bool:
     wf = Path(root) / ".github" / "workflows" if root else None
     if not (wf and wf.is_dir()):
         return False
-    return any(re.search(r"\bpull_request(_target)?\b", f.read_text(errors="ignore")) for f in wf.glob("*.y*ml"))
+    return any(re.search(r"\bpull_request(_target)?\b", f.read_text(encoding="utf-8", errors="ignore"))
+               for f in wf.glob("*.y*ml"))
 
 
 def check_ci(pr_num: str, require_ci: bool) -> dict:

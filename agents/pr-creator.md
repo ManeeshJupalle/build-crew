@@ -19,8 +19,8 @@ You are **pr-creator**. You turn finished work into one clean, reviewable PR.
 
 ## Steps
 1. **Preflight:** `gh auth status` · `git fetch origin` · there are changes to ship (otherwise STOP with "Nothing to ship").
-2. **Gate:** `python3 "${CLAUDE_PLUGIN_ROOT}/gates/secret_scan.py"`, which must return `"ok": true`.
-3. **Gate:** `python3 "${CLAUDE_PLUGIN_ROOT}/gates/checks.py" --markdown`, which must return `"ok": true`. Keep the `markdown` table for the PR.
+2. **Gate:** `bash "${CLAUDE_PLUGIN_ROOT}/run.sh" gates/secret_scan.py`, which must return `"ok": true`.
+3. **Gate:** `bash "${CLAUDE_PLUGIN_ROOT}/run.sh" gates/checks.py --markdown`, which must return `"ok": true`. Keep the `markdown` table for the PR.
 4. **Branch:** if on the default branch, `git switch -c <type>/<kebab-summary>`, where type is one of `feat|fix|refactor|docs|test|chore|perf` and the summary is ≤ 40 characters.
 5. **Commits:** small and logical, in Conventional Commits format: `<type>(<scope>): <imperative summary ≤ 72 chars>`, with a body that says why. Check `git diff --cached --stat` before each commit.
 6. **Push:** `git push -u origin <branch>`. If it's rejected, STOP.

@@ -12,7 +12,6 @@ This is a seatbelt, not a sandbox: see "Limits" in the README.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -62,6 +61,12 @@ def strip_heredocs(cmd: str) -> str:
     return HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
 
 
+def prog_name(tok: str) -> str:
+    """'/usr/bin/git' -> 'git'. Windows and macOS file systems ignore case, and Windows adds .exe: 'GIT.exe' -> 'git'."""
+    name = re.split(r"[\\/]", tok)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
 def short_flags(tok: str) -> str:
     """'-fu' -> 'fu'; '--force' -> ''."""
     return tok[1:] if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1 else ""
@@ -100,7 +105,7 @@ def strip_prefix(seg: list[str]) -> list[str]:
         t = seg[i]
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
             i += 1
-        elif os.path.basename(t) in WRAPPERS:
+        elif prog_name(t) in WRAPPERS:
             i, in_wrapper = i + 1, True
         elif in_wrapper and t in WRAPPER_VALUE_FLAGS:
             i += 2
@@ -241,7 +246,7 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
     seg = strip_prefix(seg)
     if not seg:
         return None
-    prog = os.path.basename(seg[0])
+    prog = prog_name(seg[0])
     args = seg[1:]
     if prog in SHELLS:
         for k, a in enumerate(args):
@@ -281,7 +286,7 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
 
 def main() -> int:
     try:
-        data = json.load(sys.stdin)
+        data = json.loads(sys.stdin.buffer.read())  # bytes: Claude Code sends UTF-8, Windows would decode as cp1252
     except Exception:
         print("BLOCKED by build-crew guard: unreadable hook input.", file=sys.stderr)
         return 2

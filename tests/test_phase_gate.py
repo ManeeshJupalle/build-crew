@@ -1,3 +1,5 @@
+import pytest
+
 from conftest import git, run_gate
 
 PLAN = """# Demo — Plan
@@ -31,7 +33,7 @@ PLAN = """# Demo — Plan
 
 def setup(repo):
     (repo / "docs").mkdir()
-    (repo / "docs" / "PLAN.md").write_text(PLAN)
+    (repo / "docs" / "PLAN.md").write_text(PLAN, encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "docs: plan")
     return {"CLAUDE_PROJECT_DIR": str(repo)}
@@ -68,11 +70,23 @@ def test_check_blocks_dirty_tree(repo):
 def test_done_only_ticks_when_done_when_passes(repo):
     env = setup(repo)
     code, out = run_gate("phase_gate.py", "done", "1", cwd=repo, env=env)
-    assert code == 1 and "- [ ] Phase 1" in (repo / "docs/PLAN.md").read_text()
+    assert code == 1 and "- [ ] Phase 1" in (repo / "docs/PLAN.md").read_text(encoding="utf-8")
     (repo / "marker.txt").write_text("ok")
     code, out = run_gate("phase_gate.py", "done", "1", cwd=repo, env=env)
     assert code == 0 and out["marked_done"]
-    assert "- [x] Phase 1 — Data" in (repo / "docs/PLAN.md").read_text()
+    assert "- [x] Phase 1 — Data" in (repo / "docs/PLAN.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r\n"], ids=["LF", "CRLF"])
+def test_done_keeps_the_plans_line_endings(repo, eol):
+    # editors and git settings differ per OS; ticking a box must stay a one-line diff either way
+    env = setup(repo)
+    plan = repo / "docs" / "PLAN.md"
+    plan.write_bytes(PLAN.replace("\n", eol).encode("utf-8"))
+    (repo / "marker.txt").write_text("ok")
+    code, out = run_gate("phase_gate.py", "done", "1", cwd=repo, env=env)
+    assert code == 0, out
+    assert plan.read_bytes() == PLAN.replace("- [ ] Phase 1", "- [x] Phase 1").replace("\n", eol).encode("utf-8")
 
 
 def test_verify_refuses_guard_blocked_commands(repo):
@@ -83,7 +97,7 @@ def test_verify_refuses_guard_blocked_commands(repo):
 def test_example_plan_parses(repo):
     from conftest import ROOT
     (repo / "docs").mkdir()
-    (repo / "docs" / "PLAN.md").write_text((ROOT / "examples" / "PLAN.md").read_text())
+    (repo / "docs" / "PLAN.md").write_text((ROOT / "examples" / "PLAN.md").read_text(encoding="utf-8"), encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "docs: plan")
     env = {"CLAUDE_PROJECT_DIR": str(repo)}
@@ -102,7 +116,7 @@ def test_capital_x_and_prose_dependencies(repo):
     plan = PLAN.replace("- [x] Phase 0", "- [X] Phase 0").replace(
         "**Depends on:** Phase 0\n**Work in:**", "**Depends on:** Phase 0 (needs 3 tables)\n**Work in:**")
     (repo / "docs").mkdir()
-    (repo / "docs" / "PLAN.md").write_text(plan)
+    (repo / "docs" / "PLAN.md").write_text(plan, encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "docs: plan")
     code, out = run_gate("phase_gate.py", "check", "1", cwd=repo, env={"CLAUDE_PROJECT_DIR": str(repo)})
@@ -112,7 +126,7 @@ def test_capital_x_and_prose_dependencies(repo):
 def test_slow_done_when_fails_with_json(repo, monkeypatch):
     plan = PLAN.replace("- `test -f marker.txt`\n- `true`", "- `sleep 5`")
     (repo / "docs").mkdir()
-    (repo / "docs" / "PLAN.md").write_text(plan)
+    (repo / "docs" / "PLAN.md").write_text(plan, encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "docs: plan")
     code, out = run_gate("phase_gate.py", "verify", "1", cwd=repo,

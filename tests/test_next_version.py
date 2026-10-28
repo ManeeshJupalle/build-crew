@@ -44,3 +44,10 @@ def test_prerelease_tags_are_not_a_base(repo):
     commit(repo, "fix: small")
     code, out = run_gate("next_version.py", "HEAD", cwd=repo)
     assert code == 0 and out["last_tag"] == "v1.0.0" and out["next"] == "1.1.0"
+
+
+def test_non_ascii_commit_messages(repo):
+    git(repo, "tag", "v1.0.0")
+    commit(repo, "feat: 支持 naïve — ✓")
+    code, out = run_gate("next_version.py", "HEAD", cwd=repo)
+    assert code == 0 and out["decided_by"].endswith("feat: 支持 naïve — ✓")

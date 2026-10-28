@@ -1,4 +1,11 @@
+import os
+import shutil
+
+import pytest
+
 from conftest import git, run_gate
+
+needs_make = pytest.mark.skipif(not shutil.which("make"), reason="make is not installed")
 
 
 def env(path):
@@ -19,6 +26,7 @@ def test_docs_only_change_may_pass_without_checks(repo):
     assert code == 0 and out["verdict"] == "NOT VERIFIED" and "only changes docs" in out["note"]
 
 
+@needs_make
 def test_make_targets_pass_and_fail(tmp_path):
     (tmp_path / "Makefile").write_text("lint:\n\ttrue\ntest:\n\t@echo boom; false\n")
     code, out = run_gate("checks.py", "--markdown", cwd=tmp_path, env=env(tmp_path))
@@ -28,6 +36,7 @@ def test_make_targets_pass_and_fail(tmp_path):
     assert "| test | `make test` | FAIL |" in out["markdown"]
 
 
+@needs_make
 def test_runs_in_project_root_not_cwd(tmp_path):
     (tmp_path / "Makefile").write_text("test:\n\ttest -f Makefile\n")
     (tmp_path / "sub").mkdir()
@@ -41,15 +50,28 @@ def test_all_skipped_is_not_a_pass(tmp_path):
     assert code == 1 and all(c["status"] == "SKIPPED" for c in out["checks"])
 
 
-def test_prefers_project_virtualenv(tmp_path):
-    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
-    venv_bin = tmp_path / ".venv" / "bin"
-    venv_bin.mkdir(parents=True)
-    fake = venv_bin / "pytest"
-    fake.write_text("#!/bin/sh\nexit 0\n")
+def venv_pytest(root):
+    """A Python project whose virtualenv pytest passes."""
+    scripts, exe = ("Scripts", ".exe") if os.name == "nt" else ("bin", "")
+    (root / ".venv" / scripts).mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    fake = root / ".venv" / scripts / f"pytest{exe}"
+    fake.write_text("#!/bin/sh\nexit 0\n")  # bash runs this stand-in on every OS, even when it's named .exe
     fake.chmod(0o755)
+    return fake
+
+
+def test_prefers_project_virtualenv(tmp_path):
+    fake = venv_pytest(tmp_path)
     code, out = run_gate("checks.py", cwd=tmp_path, env=env(tmp_path))
-    assert code == 0 and out["checks"][0]["cmd"].startswith(str(fake))
+    assert code == 0 and out["checks"][0]["cmd"].startswith(fake.as_posix())
+
+
+def test_project_path_with_spaces(tmp_path):
+    root = tmp_path / "my project"
+    venv_pytest(root)
+    code, out = run_gate("checks.py", cwd=root, env=env(root))
+    assert code == 0, out
 
 
 def test_requirements_txt_is_not_docs(repo):

@@ -19,7 +19,7 @@ You are **release-manager**. You run one mode per call, `prepare` or `publish`. 
 
 ## prepare
 1. Clean tree · `git fetch origin --tags` · `git switch <default> && git pull --ff-only`.
-2. `python3 "${CLAUDE_PLUGIN_ROOT}/gates/next_version.py"`. If `"ok": false`, STOP with its note.
+2. `bash "${CLAUDE_PLUGIN_ROOT}/run.sh" gates/next_version.py`. If `"ok": false`, STOP with its note.
 3. Check that the tag is free: `git ls-remote --tags origin v<next>` returns nothing.
 4. `git switch -c chore/release-v<next>`.
 5. Bump the version in every file that has one (`package.json` via `npm version <v> --no-git-tag-version`, `pyproject.toml`, `Cargo.toml`, `__version__`, `version.txt`). Grep for the old version and list any you're unsure of instead of editing them.

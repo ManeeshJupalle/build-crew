@@ -5,7 +5,7 @@ argument-hint: [note]
 
 Write a handoff. Note: $ARGUMENTS
 
-1. **Facts (check them, don't guess):** `git branch --show-current` · `git status --porcelain` · `git log --oneline -8` · `gh pr list --author @me --state open --json number,title,url` · `python3 "${CLAUDE_PLUGIN_ROOT}/gates/phase_gate.py" next` (if `docs/PLAN.md` exists) · what happened this session.
+1. **Facts (check them, don't guess):** `git branch --show-current` · `git status --porcelain` · `git log --oneline -8` · `gh pr list --author @me --state open --json number,title,url` · `bash "${CLAUDE_PLUGIN_ROOT}/run.sh" gates/phase_gate.py next` (if `docs/PLAN.md` exists) · what happened this session.
 2. **Write `docs/PROGRESS.md`.** Replace everything above `## History` and append one History line, keeping the latest 30. Stay under 40 lines above History:
 ```
 # Progress

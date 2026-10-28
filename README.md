@@ -20,7 +20,7 @@ Plugin commands are namespaced, e.g. `/build-crew:ship`.
 ```bash
 git clone https://github.com/ManeeshJupalle/build-crew && ./build-crew/install.sh
 ```
-You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+ on macOS or Linux (on Windows, use WSL).
+You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+. Works on macOS, Linux and Windows (in Git Bash, which Claude Code on Windows already uses).
 
 ## Use
 
@@ -41,7 +41,7 @@ flowchart LR
   PG2 --> C(pr-creator) --> SG{{secret_scan + checks}} --> R(pr-reviewer) --> MG{{merge_gate}}
   MG --> RL(release notes) --> D(deploy) --> H[/you approve production/]
 ```
-Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step below has the same label and a way to verify it yourself. Gate paths are relative to the plugin folder.
+Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step below has the same label and a way to verify it yourself. Gate paths are relative to the plugin folder. On Windows, type `python` instead of `python3`.
 
 1. **Plan:** `AI`
    `architect` writes `docs/HOW_IT_WORKS.md` (≤ 150 lines: picture, steps, decisions, non-goals). `planner` writes `docs/PLAN.md`: small phases, each ending in runnable *Done when* commands.
@@ -69,7 +69,7 @@ Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step b
    Staging plus smoke tests, then production **only after you say yes**, for the exact commit that passed staging. Failed production smoke tests trigger a rollback.
 
 ### Always on: `Code`
-- **Guard hook** (`hooks/guard.py`) parses each shell command, including chained, nested (`bash -c`) and `$(…)` commands, and blocks the destructive things agents actually do: force-push (any spelling), pushes or merges onto protected branches, skipping git hooks (`--no-verify`, `-n`, `HUSKY=0`, `core.hooksPath`), `reset --hard`, `git add -A`, recursive deletes of `/`, `~` or `.`, and merging PRs outside `merge_gate` (CLI, REST or GraphQL). Heredoc commit and PR messages are treated as text, not commands. It fails closed on anything it can't parse. 90+ test cases cover it.
+- **Guard hook** (`hooks/guard.py`) parses each shell command, including chained, nested (`bash -c`) and `$(…)` commands, and blocks the destructive things agents actually do: force-push (any spelling), pushes or merges onto protected branches, skipping git hooks (`--no-verify`, `-n`, `HUSKY=0`, `core.hooksPath`), `reset --hard`, `git add -A`, recursive deletes of `/`, `~` or `.`, and merging PRs outside `merge_gate` (CLI, REST or GraphQL). Heredoc commit and PR messages are treated as text, not commands. It fails closed on anything it can't parse, and when Python is missing. 90+ test cases cover it.
 - **Session hook** (`hooks/session_start.sh`) loads your last `/handoff` and phase progress into every new session.
 
 ## The crew
@@ -104,7 +104,7 @@ Gates make the important checks repeatable and visible. They are not a security 
 - **"Read-only" agents still have Bash** to run `gh` and `git`. They have no Write/Edit tools, and their instructions forbid changes, but that part is enforced by the prompt, not by code.
 - **PLAN.md is editable.** A phase is "done" when its Done-when commands pass, but those commands live in a file the AI can edit. The reviewer flags changes to Done-when lines and phase ticks, and they show up in the PR diff.
 - **Production approval** is enforced by the `/deploy` flow asking you. The deployer refuses without it, but that check is in the prompt.
-- Tested on **macOS and Linux**. On Windows, use WSL.
+- CI runs the tests on **macOS, Linux and Windows**.
 
 ## Contributing
 

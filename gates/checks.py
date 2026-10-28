@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -30,7 +31,7 @@ def node_checks(root: Path) -> list[tuple[str, str, str]]:
     pkg = root / "package.json"
     if not pkg.exists():
         return []
-    scripts = json.loads(pkg.read_text() or "{}").get("scripts", {})
+    scripts = json.loads(pkg.read_text(encoding="utf-8") or "{}").get("scripts", {})
     pm = ("pnpm" if (root / "pnpm-lock.yaml").exists() else
           "yarn" if (root / "yarn.lock").exists() else
           "bun" if (root / "bun.lockb").exists() or (root / "bun.lock").exists() else "npm")
@@ -39,10 +40,11 @@ def node_checks(root: Path) -> list[tuple[str, str, str]]:
 
 def python_tool(root: Path, tool: str) -> str:
     """Prefer the project's virtualenv over whatever is on PATH."""
+    scripts, exe = ("Scripts", ".exe") if os.name == "nt" else ("bin", "")
     for venv in (".venv", "venv"):
-        cand = root / venv / ("Scripts" if os.name == "nt" else "bin") / tool
+        cand = root / venv / scripts / (tool + exe)
         if cand.exists():
-            return str(cand)
+            return cand.as_posix()  # forward slashes: checks run in bash on every OS
     return tool
 
 
@@ -50,17 +52,17 @@ def python_checks(root: Path) -> list[tuple[str, str, str]]:
     py = root / "pyproject.toml"
     if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists()):
         return []
-    cfg = py.read_text() if py.exists() else ""
+    cfg = py.read_text(encoding="utf-8") if py.exists() else ""
     out = []
     if "[tool.ruff" in cfg or (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
         t = python_tool(root, "ruff")
-        out.append(("lint", f"{t} check .", t))
+        out.append(("lint", f"{shlex.quote(t)} check .", t))
     if "[tool.mypy" in cfg or (root / "mypy.ini").exists():
         t = python_tool(root, "mypy")
-        out.append(("typecheck", f"{t} .", t))
+        out.append(("typecheck", f"{shlex.quote(t)} .", t))
     if (root / "tests").is_dir() or "[tool.pytest" in cfg or (root / "pytest.ini").exists():
         t = python_tool(root, "pytest")
-        out.append(("test", f"{t} -q", t))
+        out.append(("test", f"{shlex.quote(t)} -q", t))
     return out
 
 
@@ -82,7 +84,7 @@ def make_checks(root: Path) -> list[tuple[str, str, str]]:
     mk = root / "Makefile"
     if not mk.exists():
         return []
-    targets = set(re.findall(r"^([A-Za-z][\w-]*):", mk.read_text(), re.M))
+    targets = set(re.findall(r"^([A-Za-z][\w-]*):", mk.read_text(encoding="utf-8"), re.M))
     return [(t, f"make {t}", "make") for t in ("lint", "test") if t in targets]
 
 

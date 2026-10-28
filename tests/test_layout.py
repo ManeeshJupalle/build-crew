@@ -8,10 +8,12 @@ from conftest import ROOT
 
 AGENTS = sorted((ROOT / "agents").glob("*.md"))
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
+CODE = sorted((ROOT / "gates").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")) + \
+    [ROOT / "install.sh", ROOT / "uninstall.sh"]
 
 
 def frontmatter(path):
-    m = re.match(r"---\n(.*?)\n---\n", path.read_text(), re.S)
+    m = re.match(r"---\n(.*?)\n---\n", path.read_text(encoding="utf-8"), re.S)
     assert m, f"{path.name}: missing frontmatter"
     return dict(line.split(":", 1) for line in m.group(1).splitlines() if ":" in line)
 
@@ -30,15 +32,31 @@ def test_command_frontmatter(path):
 
 
 @pytest.mark.parametrize("path", AGENTS + COMMANDS, ids=lambda p: p.name)
+def test_lf_line_endings(path):
+    # with CRLF, Claude Code drops the frontmatter; .gitattributes keeps Windows checkouts on LF
+    assert b"\r\n" not in path.read_bytes()
+
+
+@pytest.mark.parametrize("path", AGENTS + COMMANDS, ids=lambda p: p.name)
 def test_references_resolve(path):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for agent in re.findall(r"`build-crew:([a-z-]+)`", text):
         assert (ROOT / "agents" / f"{agent}.md").exists(), f"{path.name} references missing agent {agent}"
     for gate in re.findall(r"gates/([a-z_]+\.py)", text):
         assert (ROOT / "gates" / gate).exists(), f"{path.name} references missing gate {gate}"
-    # shell variables don't survive between Claude's Bash calls: gates must be called by full path
-    for call in re.findall(r"python3 \"?([^\s\"`]+\.py)", text):
-        assert call.startswith("${CLAUDE_PLUGIN_ROOT}/gates/"), f"{path.name}: gate called as {call}"
+    # Python is python3, python or py depending on the OS, so gates run through run.sh, which finds it.
+    # Shell variables don't survive between Claude's Bash calls, so run.sh is called by full path.
+    assert "python3" not in text, f"{path.name}: run gates with run.sh, not python3"
+    for call in re.findall(r"`([^`]*gates/[a-z_]+\.py)", text):
+        assert call.startswith('bash "${CLAUDE_PLUGIN_ROOT}/run.sh" gates/'), f"{path.name}: gate called as {call}"
+
+
+@pytest.mark.parametrize("path", CODE, ids=lambda p: p.name)
+def test_files_are_read_and_written_as_utf8(path):
+    # Windows defaults to a legacy encoding (cp1252), which garbles anything outside ASCII
+    calls = re.findall(r"\b(?:read_text|write_text|open)\(((?:[^()]|\([^()]*\))*)\)", path.read_text(encoding="utf-8"))
+    for args in calls:
+        assert "encoding=" in args, f"{path.name}: ({args}) needs encoding=\"utf-8\""
 
 
 def test_non_editing_agents_have_no_write_tools():
@@ -55,5 +73,5 @@ def test_plugin_manifests():
     for entries in hooks.values():
         for e in entries:
             for h in e["hooks"]:
-                rel = re.search(r"/(hooks/[\w.]+)", h["command"]).group(1)
-                assert (ROOT / rel).exists()
+                files = re.findall(r"\b((?:hooks|gates)/[\w.]+|run\.sh)\b", h["command"])
+                assert files and all((ROOT / f).exists() for f in files), h["command"]

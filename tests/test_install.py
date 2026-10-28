@@ -1,6 +1,7 @@
 """install.sh / uninstall.sh against a throwaway HOME."""
 import json
 import os
+import re
 import subprocess
 
 import pytest
@@ -20,16 +21,21 @@ def home(tmp_path):
     (c / "commands").mkdir()
     (c / "settings.json").write_text(json.dumps({
         "model": "opus",
+        "statusLine": {"type": "command", "command": "echo 'build → ✓ 修复'"},
         "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
             {"type": "command", "command": "bash ~/myhooks/audit.sh"},
             {"type": "command", "command": "python3 ~/myhooks/guard.py"}]}]},
-    }))
+    }, ensure_ascii=False), encoding="utf-8")
     (c / "agents" / "debugger.md").write_text("---\nname: debugger\ndescription: my own agent\n---\nmine\n")
     return tmp_path
 
 
 def settings(home):
-    return json.loads((home / ".claude/settings.json").read_text())
+    return json.loads((home / ".claude/settings.json").read_text(encoding="utf-8"))
+
+
+def our_guard(cmds):
+    return sum('build-crew/run.sh" hooks/guard.py' in c for c in cmds)
 
 
 def test_install_keeps_user_files_and_hooks(home):
@@ -38,8 +44,8 @@ def test_install_keeps_user_files_and_hooks(home):
     s = settings(home)
     cmds = [h["command"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
     assert "bash ~/myhooks/audit.sh" in cmds and "python3 ~/myhooks/guard.py" in cmds  # user's hooks untouched
-    assert sum("build-crew/hooks/guard.py" in c for c in cmds) == 1
-    assert s["model"] == "opus"
+    assert our_guard(cmds) == 1
+    assert s["model"] == "opus" and s["statusLine"]["command"] == "echo 'build → ✓ 修复'"   # survives on Windows too
     backups = list((home / ".claude/build-crew").glob("backup-*/agents/debugger.md"))
     assert backups and "mine" in backups[0].read_text()                                 # user's agent backed up
 
@@ -50,11 +56,14 @@ def test_install_is_idempotent_and_renders_paths(home):
     s = settings(home)
     assert len(s["hooks"]["SessionStart"]) == 1
     cmds = [h["command"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
-    assert sum("build-crew/hooks/guard.py" in c for c in cmds) == 1
+    assert our_guard(cmds) == 1
     for f in (home / ".claude/agents").glob("*.md"):
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         assert "CLAUDE_PLUGIN_ROOT" not in text and "`build-crew:" not in text
-    assert str(home / ".claude/build-crew/gates/merge_gate.py") in (home / ".claude/commands/ship.md").read_text()
+    ship = (home / ".claude/commands/ship.md").read_text(encoding="utf-8")
+    # Git Bash spells HOME /c/Users/..., so match the folder names rather than the whole path
+    m = re.search(r'bash "([^"]+)/\.claude/build-crew/run\.sh" gates/merge_gate\.py', ship)
+    assert m and m.group(1).endswith(home.name)
 
 
 def test_bad_settings_aborts_without_changes(home):

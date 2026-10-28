@@ -71,7 +71,7 @@ def scan() -> None:
             findings.append({"file": f, "issue": f"large file ({p.stat().st_size // 1024} KB)"})
             continue
         try:
-            text = p.read_text(errors="ignore")
+            text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         for lineno, line in enumerate(text.splitlines(), 1):

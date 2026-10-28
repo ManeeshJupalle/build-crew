@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 import traceback
@@ -21,12 +23,25 @@ class GateError(Exception):
     pass
 
 
+def find_bash() -> str | None:
+    """Command strings (Done-when, checks) are written for Claude's Bash tool, so run them with bash on every OS.
+
+    On Windows that is Git Bash; the bash.exe in System32 or WindowsApps would start WSL instead.
+    """
+    bash = shutil.which("bash")
+    if bash and os.name == "nt" and re.search(r"\\(system32|windowsapps)\\", bash, re.I):
+        return None
+    return bash
+
+
 def run(cmd: list[str] | str, timeout: int = 900, cwd: str | None = None,
         env: dict | None = None) -> subprocess.CompletedProcess:
     full_env = {**os.environ, "CI": "1", **(env or {})}
+    if isinstance(cmd, str) and (bash := find_bash()):
+        cmd = [bash, "-c", cmd]
     try:
-        return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True,
-                              timeout=timeout, cwd=cwd, env=full_env)
+        return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, cwd=cwd, env=full_env)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout}s")
     except FileNotFoundError as e:
@@ -34,7 +49,9 @@ def run(cmd: list[str] | str, timeout: int = 900, cwd: str | None = None,
 
 
 def gh(*args: str) -> subprocess.CompletedProcess:
-    return run([*shlex.split(GH), *args], timeout=120)
+    # posix=False keeps Windows backslashes in paths; it leaves the quotes on, so strip them
+    prog = shlex.split(GH) if os.name != "nt" else [p.strip('"') for p in shlex.split(GH, posix=False)]
+    return run([*prog, *args], timeout=120)
 
 
 def gh_json(*args: str) -> Any:

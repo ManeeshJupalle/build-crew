@@ -16,7 +16,7 @@ MARKER="<!-- installed by build-crew -->"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BK="$ROOT/backup-$STAMP"
 
-command -v python3 >/dev/null || { echo "python3 is required"; exit 1; }
+bash "$KIT/run.sh" - </dev/null >/dev/null || exit 1   # run.sh says which Python is missing
 command -v gh >/dev/null || echo "⚠️  GitHub CLI not found: install it from https://cli.github.com before using /ship"
 
 mkdir -p "$CLAUDE/agents" "$CLAUDE/commands" "$ROOT"
@@ -44,9 +44,9 @@ for f in "$CLAUDE"/hooks/guard.py "$CLAUDE"/hooks/session_start.sh; do
   [ -f "$f" ] && grep -qE 'build-crew|pr-agents' "$f" && backup "$f"
 done
 
-# 2. Gates and hooks (build-crew's own folder: replaced wholesale).
+# 2. Gates, hooks and the Python launcher (build-crew's own folder: replaced wholesale).
 rm -rf "$ROOT/gates" "$ROOT/hooks"
-cp -R "$KIT/gates" "$KIT/hooks" "$ROOT/"
+cp -R "$KIT/gates" "$KIT/hooks" "$KIT/run.sh" "$ROOT/"
 chmod +x "$ROOT"/gates/*.py "$ROOT"/hooks/*.py "$ROOT"/hooks/*.sh
 
 # 3. Agents and commands: resolve the plugin path variable and namespace, add the marker.
@@ -69,25 +69,25 @@ if [ -f "$SETTINGS" ]; then
   mkdir -p "$BK"
   cp "$SETTINGS" "$BK/settings.json"
 fi
-python3 - "$SETTINGS" "$ROOT" "$CLAUDE" <<'PY'
+bash "$KIT/run.sh" - "$SETTINGS" "$ROOT" "$CLAUDE" <<'PY'
 import json, os, sys
 path, root, claude = sys.argv[1:4]
 if os.path.exists(path):
     try:
-        s = json.load(open(path))
+        s = json.load(open(path, encoding="utf-8"))
     except json.JSONDecodeError as e:
         sys.exit(f"✗ {path} is not valid JSON ({e}); fix it and re-run. Nothing was changed.")
 else:
     s = {}
 
-OURS = (f"{root}/hooks/", f"{claude}/hooks/guard.py", f"{claude}/hooks/session_start.sh",
+OURS = (f"{root}/hooks/", f"{root}/run.sh", f"{claude}/hooks/guard.py", f"{claude}/hooks/session_start.sh",
         '$HOME/.claude/hooks/guard.py', '$HOME/.claude/hooks/session_start.sh', '$HOME/.claude/build-crew/hooks/')
 def ours(h):  # one hook handler
     return any(o in h.get("command", "") for o in OURS)
 
 hooks = s.setdefault("hooks", {})
 mine = {
-    "PreToolUse": {"matcher": "Bash", "hooks": [{"type": "command", "command": f'python3 "{root}/hooks/guard.py"'}]},
+    "PreToolUse": {"matcher": "Bash", "hooks": [{"type": "command", "command": f'bash "{root}/run.sh" hooks/guard.py'}]},
     "SessionStart": {"hooks": [{"type": "command", "command": f'bash "{root}/hooks/session_start.sh"'}]},
 }
 for event, entry in mine.items():
@@ -108,7 +108,7 @@ for rule in ["Bash(git push --force:*)", "Bash(git push -f:*)", "Bash(gh pr merg
         deny.append(rule)
 
 tmp = path + ".build-crew.tmp"
-with open(tmp, "w") as f:
+with open(tmp, "w", encoding="utf-8") as f:
     json.dump(s, f, indent=2)
 os.replace(tmp, path)   # atomic: never leaves a half-written settings.json
 PY

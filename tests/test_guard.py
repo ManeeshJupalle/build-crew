@@ -1,10 +1,14 @@
 import json
+import os
+import shutil
 import subprocess
 import sys
 
 import pytest
 
-from conftest import HOOKS
+from conftest import HOOKS, ROOT
+
+BASH = shutil.which("bash")
 
 BLOCKED = [
     # force push, every spelling
@@ -76,6 +80,10 @@ BLOCKED = [
     "git checkout main && git merge feat/x && git push",
     "git checkout main && git commit -m x",
     "git checkout main\ngit commit -m x",
+    # Windows and macOS spellings of the same programs
+    "git.exe push --force",
+    "\"/c/Program Files/Git/cmd/git.exe\" push --force",
+    "GH.EXE pr merge 7",
 ]
 
 ALLOWED = [
@@ -106,12 +114,17 @@ ALLOWED = [
     "git status  # just looking",
     "timeout 120 npm test",
     "git checkout -- src/app.ts",
+    "git commit -m 'fix: 修复 naïve — ✓'",
 ]
 
 
+def payload(cmd: str, tool: str = "Bash") -> bytes:
+    # raw UTF-8, as Claude Code sends it
+    return json.dumps({"tool_name": tool, "tool_input": {"command": cmd}}, ensure_ascii=False).encode("utf-8")
+
+
 def guard(cmd: str, tool: str = "Bash", cwd=None) -> int:
-    payload = json.dumps({"tool_name": tool, "tool_input": {"command": cmd}})
-    return subprocess.run([sys.executable, str(HOOKS / "guard.py")], input=payload, text=True,
+    return subprocess.run([sys.executable, str(HOOKS / "guard.py")], input=payload(cmd, tool),
                           capture_output=True, cwd=cwd).returncode
 
 
@@ -163,3 +176,22 @@ def test_fails_closed():
     res = subprocess.run([sys.executable, str(HOOKS / "guard.py")], input="not json", text=True, capture_output=True)
     assert res.returncode == 2
     assert guard("git commit -m 'unbalanced") == 2
+
+
+def hook_command() -> str:
+    """The guard command from hooks.json, with the plugin path filled in the way Claude Code does it."""
+    hooks = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    return hooks[0]["hooks"][0]["command"].replace("${CLAUDE_PLUGIN_ROOT}", ROOT.as_posix())
+
+
+@pytest.mark.parametrize("cmd,code", [("git push --force", 2), ("git push", 0)])
+def test_hook_command_finds_python_on_this_os(feature_repo, cmd, code):
+    res = subprocess.run([BASH, "-c", hook_command()], input=payload(cmd), capture_output=True, cwd=feature_repo)
+    assert res.returncode == code, res.stderr
+
+
+def test_hook_blocks_when_python_is_missing(feature_repo, tmp_path):
+    # any exit code but 2 is a non-blocking hook error, which would let every command through
+    res = subprocess.run([BASH, str(ROOT / "run.sh"), "hooks/guard.py"], input=payload("git status"),
+                         capture_output=True, cwd=feature_repo, env={**os.environ, "PATH": str(tmp_path)})
+    assert res.returncode == 2 and b"needs Python 3.9+" in res.stderr

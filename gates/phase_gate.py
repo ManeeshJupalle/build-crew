@@ -38,7 +38,8 @@ def load() -> tuple[str, dict]:
     p = plan_path()
     if not p.exists():
         emit({"gate": "phase", "error": "docs/PLAN.md not found: run /kickoff first"}, False)
-    text = p.read_text()
+    with open(p, encoding="utf-8", newline="") as f:  # newline="": keep \r\n or \n as the file has it
+        text = f.read()
     phases = {m.group(2): {"done": m.group(1) in "xX", "name": m.group(3).strip()}
               for m in PROGRESS_RE.finditer(text)}
     return text, phases
@@ -130,7 +131,8 @@ def main() -> None:
         emit(out, v["ok"])
     # done: tick the box
     new = re.sub(rf"^- \[ \] Phase {re.escape(pid)} ([—-])", rf"- [x] Phase {pid} \1", text, count=1, flags=re.M)
-    plan_path().write_text(new)
+    with open(plan_path(), "w", encoding="utf-8", newline="") as f:  # ticking a box is a one-line diff
+        f.write(new)
     out["marked_done"] = True
     emit(out, True)
 
