@@ -119,6 +119,11 @@ BLOCKED = [
     "if true; then git push --force; fi",
     "for b in x; do git push -f; done",
     "! git push --force",
+    # ...while a { } argument doesn't hide one
+    "git commit -m '{}' --no-verify",
+    "git commit -m \"}\" --no-verify",
+    "git push origin } --force",
+    "gh api --jq '{}' -X PUT repos/o/r/pulls/7/merge",
 ]
 
 ALLOWED = [
