@@ -5,7 +5,7 @@ It parses the command into shell words instead of pattern-matching raw text, so
   - quoted text such as commit messages can't trigger it ("docs: explain --no-verify"),
   - git global options can't hide it (git -C . push --force),
   - chained, grouped, nested and substituted commands are checked
-    (&&, ;, |, if/then, ( ), { }, bash -c, pwsh -c, cmd /c, $(...)).
+    (&&, ;, |, if/then, { }, bash -c, pwsh -c, cmd /c, $(...)).
 
 Exit 2 = block (stderr is shown to Claude). Exit 0 = allow.
 This is a seatbelt, not a sandbox: see "Limits" in the README.
@@ -60,7 +60,6 @@ def local_branch_exists(name: str) -> bool:
 
 
 HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^[ \t]*\2[ \t]*$", re.S | re.M)
-SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
 
 
 def strip_heredocs(cmd: str) -> str:
@@ -80,7 +79,7 @@ def short_flags(tok: str) -> str:
 
 
 def tokenize(cmd: str) -> list[str]:
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|\n()")
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|\n")
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # keep newlines as separators
     lex.commenters = ""         # we drop comments per segment, so a comment can't swallow the next line
@@ -90,8 +89,8 @@ def tokenize(cmd: str) -> list[str]:
 def segments(tokens: list[str]) -> list[list[str]]:
     segs, cur, comment = [], [], False
     for t in tokens:
-        # ( ) and a standalone { } group commands; an empty argument ('') is not a separator
-        if t in SEPARATORS or (t and set(t) <= set(";&|\n(){}")):
+        # a standalone { } groups commands; an empty argument ('') is not a separator
+        if t in SEPARATORS or (t and set(t) <= set(";&|\n{}")):
             if cur:
                 segs.append(cur)
             cur, comment = [], False
@@ -301,14 +300,11 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
         return "Command nesting too deep to verify."
     state = {} if state is None else state
     cmd = strip_heredocs(cmd)
-    # commands inside $(...) and backticks run too: check them, innermost first, then leave a plain word in
-    # their place so their parentheses can't split the command around them
-    while SUBST.search(cmd):
-        for inner in SUBST.findall(cmd):
-            reason = check(inner[0] or inner[1], depth + 1, state)
-            if reason:
-                return reason
-        cmd = SUBST.sub("_", cmd)
+    # commands inside $(...) and backticks run too
+    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", cmd):
+        reason = check(inner[0] or inner[1], depth + 1, state)
+        if reason:
+            return reason
     try:
         tokens = tokenize(cmd)
     except ValueError:

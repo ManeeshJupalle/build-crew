@@ -107,9 +107,11 @@ BLOCKED = [
     "git push origin $(git branch --show-current) --force",
     "git commit -m $(cat msg.txt) --no-verify",
     "git reset $(git merge-base HEAD origin/main) --hard",
-    "git -C $(git rev-parse --show-toplevel) push --force",
     "git push origin $(echo $(whoami)) --force",
     "git push origin `git branch --show-current` --force",
+    "git reset HEAD~$((1+1)) --hard",
+    "git push origin $(git log -1 --format='%h (x)') --force",
+    "echo '$(' && git push --force && echo ')'",
     # grouped and control-flow commands
     "(cd sub && git push --force)",
     "{ git push --force; }",
