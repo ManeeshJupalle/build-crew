@@ -86,11 +86,11 @@ def tokenize(cmd: str) -> list[str]:
     return list(lex)
 
 
-def segments(tokens: list[str]) -> list[list[str]]:
+def segments(tokens: list[str], braces: bool) -> list[list[str]]:
+    seps = set(";&|\n{}") if braces else set(";&|\n")
     segs, cur, comment = [], [], False
     for t in tokens:
-        # a standalone { } groups commands; an empty argument ('') is not a separator
-        if t in SEPARATORS or (t and set(t) <= set(";&|\n{}")):
+        if t in SEPARATORS or (t and set(t) <= seps):  # an empty argument ('') is not a separator
             if cur:
                 segs.append(cur)
             cur, comment = [], False
@@ -309,10 +309,16 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
         tokens = tokenize(cmd)
     except ValueError:
         return "Could not parse this command (unbalanced quotes?), so it can't be verified."
-    for seg in segments(tokens):
-        reason = check_segment(seg, state, depth)
-        if reason:
-            return reason
+    # a standalone { } may group commands ({ git push -f; }) or be a plain argument (-m '{}'), so check both ways,
+    # each from the same starting branch
+    start = dict(state)
+    for braces in (False, True):
+        state.clear()
+        state.update(start)
+        for seg in segments(tokens, braces):
+            reason = check_segment(seg, state, depth)
+            if reason:
+                return reason
     return None
 
 
