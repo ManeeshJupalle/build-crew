@@ -49,6 +49,15 @@ def test_near_miss_prefixes_pass(repo):
     assert code == 0 and out["findings"] == []
 
 
+@pytest.mark.parametrize("value", ["x" + FAKE_NPM, "_" + FAKE_NPM, "1" + FAKE_NPM,
+                                  FAKE_NPM + "A", FAKE_NPM + "_"])
+def test_npm_token_inside_longer_word_passes(repo, value):
+    feature(repo)
+    (repo / "ci.sh").write_text(f"x = '{value}'\n")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 0 and out["findings"] == []
+
+
 @pytest.mark.parametrize("value", [FAKE_GITLAB[:-1], FAKE_NPM[:-1], FAKE_HF[:-1]])
 def test_token_one_char_short_passes(repo, value):
     feature(repo)
