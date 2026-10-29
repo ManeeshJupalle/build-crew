@@ -33,6 +33,9 @@ SECRET_PATTERNS = {
     "Slack token": r"xox[abprs]-[A-Za-z0-9-]{10,}",
     "Google API key": r"AIza[0-9A-Za-z_\-]{35}",
     "Stripe live key": r"(sk|rk)_live_[0-9a-zA-Z]{20,}",
+    "GitLab personal access token": r"glpat-[0-9A-Za-z_\-]{20,}",
+    "npm token": r"npm_[A-Za-z0-9]{36}",
+    "Hugging Face token": r"\bhf_[A-Za-z]{34}(?![A-Za-z0-9_])",
     "Private key block": r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
     "Hardcoded credential": r"""(?i)(api[_-]?key|secret|token|passw(or)?d)\s*[:=]\s*['"][^'"\s$<{]{12,}['"]""",
 }
