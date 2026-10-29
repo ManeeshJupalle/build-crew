@@ -4,7 +4,8 @@
 It parses the command into shell words instead of pattern-matching raw text, so
   - quoted text such as commit messages can't trigger it ("docs: explain --no-verify"),
   - git global options can't hide it (git -C . push --force),
-  - chained, nested and substituted commands are checked (&&, ;, |, bash -c, $(...)).
+  - chained, grouped, nested and substituted commands are checked
+    (&&, ;, |, if/then, { }, bash -c, pwsh -c, cmd /c, $(...)).
 
 Exit 2 = block (stderr is shown to Claude). Exit 0 = allow.
 This is a seatbelt, not a sandbox: see "Limits" in the README.
@@ -23,7 +24,12 @@ WRAPPERS = {"sudo", "command", "exec", "time", "nice", "ionice", "nohup", "env",
             "stdbuf", "caffeinate", "chronic"}
 WRAPPER_VALUE_FLAGS = {"-u", "-g", "-n", "-s", "-k", "-c", "-p", "-o", "-e", "-i", "--signal", "--kill-after", "--user"}
 HOOK_SKIP_ENV = re.compile(r"^(HUSKY=0|HUSKY_SKIP_HOOKS=|HUSKY_SKIP_INSTALL=|SKIP=|PRE_COMMIT_ALLOW_NO_CONFIG=|GIT_HOOKS_PATH=)")
-SHELLS = {"bash", "sh", "zsh", "dash"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"}
+KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}  # what follows is a command
+POWERSHELLS = {"pwsh", "powershell"}
+PS_VALUE_PARAMS = ("executionpolicy", "windowstyle", "inputformat", "outputformat", "version", "psconsolefile",
+                   "configurationname", "configurationfile", "workingdirectory", "settingsfile", "custompipename")
+PS_VALUE_ALIASES = {"ep", "ex", "w", "wd", "o", "of", "i", "if", "v"}
 DANGEROUS_RM_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "$HOME/*",
                         ".", "./", "./*", "..", "../", "*", ".*"}
 
@@ -80,10 +86,11 @@ def tokenize(cmd: str) -> list[str]:
     return list(lex)
 
 
-def segments(tokens: list[str]) -> list[list[str]]:
+def segments(tokens: list[str], braces: bool) -> list[list[str]]:
+    seps = set(";&|\n{}") if braces else set(";&|\n")
     segs, cur, comment = [], [], False
     for t in tokens:
-        if t in SEPARATORS or set(t) <= set(";&|\n"):
+        if t in SEPARATORS or (t and set(t) <= seps):  # an empty argument ('') is not a separator
             if cur:
                 segs.append(cur)
             cur, comment = [], False
@@ -103,7 +110,7 @@ def strip_prefix(seg: list[str]) -> list[str]:
     i, in_wrapper = 0, False
     while i < len(seg):
         t = seg[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t) or (t in KEYWORDS and not in_wrapper):
             i += 1
         elif prog_name(t) in WRAPPERS:
             i, in_wrapper = i + 1, True
@@ -235,6 +242,25 @@ def check_rm(args: list[str]) -> str | None:
     return None
 
 
+def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
+    """PowerShell runs everything after -Command as one command, and Windows PowerShell does the same with a bare
+    first argument. Parameters start with - or /, ignore case and can be shortened (-c, -co, /enc).
+    -EncodedCommand is base64, so it can't be checked. After -File come the script's own arguments."""
+    k = 0
+    while k < len(args) and args[k][:1] in ("-", "/"):
+        name = args[k].lstrip("-/").lower()
+        if name in ("e", "ec") or (len(name) > 1 and "encodedcommand".startswith(name)):
+            return "PowerShell -EncodedCommand can't be verified."
+        if name in ("c", "cwa") or (len(name) > 1 and "commandwithargs".startswith(name)):
+            k += 1
+            break
+        if name == "f" or (len(name) > 1 and "file".startswith(name)):
+            return None
+        takes_value = name in PS_VALUE_ALIASES or (len(name) > 1 and any(p.startswith(name) for p in PS_VALUE_PARAMS))
+        k += 2 if takes_value else 1
+    return check(" ".join(args[k:]), depth + 1, state) if k < len(args) else None
+
+
 def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
     if seg and seg[0] == "export":
         seg = seg[1:]
@@ -250,8 +276,14 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
     args = seg[1:]
     if prog in SHELLS:
         for k, a in enumerate(args):
-            if (a == "-c" or "c" in short_flags(a)) and k + 1 < len(args):
+            if (a in ("-c", "--command") or "c" in short_flags(a)) and k + 1 < len(args):
                 return check(args[k + 1], depth + 1, state)
+    if prog in POWERSHELLS:
+        return check_powershell(args, state, depth)
+    if prog == "cmd":
+        for k, a in enumerate(args):
+            if re.fullmatch(r"/+[ckr]", a, re.I):  # Git Bash turns /c into a path, so it's written //c there
+                return check(" ".join(args[k + 1:]), depth + 1, state)
     if prog == "eval":
         return check(" ".join(args), depth + 1, state)
     if prog == "git":
@@ -277,10 +309,16 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
         tokens = tokenize(cmd)
     except ValueError:
         return "Could not parse this command (unbalanced quotes?), so it can't be verified."
-    for seg in segments(tokens):
-        reason = check_segment(seg, state, depth)
-        if reason:
-            return reason
+    # a standalone { } may group commands ({ git push -f; }) or be a plain argument (-m '{}'), so check both ways,
+    # each from the same starting branch
+    start = dict(state)
+    for braces in (False, True):
+        state.clear()
+        state.update(start)
+        for seg in segments(tokens, braces):
+            reason = check_segment(seg, state, depth)
+            if reason:
+                return reason
     return None
 
 

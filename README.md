@@ -69,7 +69,7 @@ Rounded boxes are AI, hexagons are code, and the slanted box is you. Each step b
    Staging plus smoke tests, then production **only after you say yes**, for the exact commit that passed staging. Failed production smoke tests trigger a rollback.
 
 ### Always on: `Code`
-- **Guard hook** (`hooks/guard.py`) parses each shell command, including chained, nested (`bash -c`) and `$(…)` commands, and blocks the destructive things agents actually do: force-push (any spelling), pushes or merges onto protected branches, skipping git hooks (`--no-verify`, `-n`, `HUSKY=0`, `core.hooksPath`), `reset --hard`, `git add -A`, recursive deletes of `/`, `~` or `.`, and merging PRs outside `merge_gate` (CLI, REST or GraphQL). Heredoc commit and PR messages are treated as text, not commands. It fails closed on anything it can't parse, and when Python is missing. 90+ test cases cover it.
+- **Guard hook** (`hooks/guard.py`) parses each shell command, including chained, grouped (`if`, `{ }`), nested (`bash -c`, `pwsh -c`, `cmd /c`) and `$(…)` commands, and blocks the destructive things agents actually do: force-push (any spelling), pushes or merges onto protected branches, skipping git hooks (`--no-verify`, `-n`, `HUSKY=0`, `core.hooksPath`), `reset --hard`, `git add -A`, recursive deletes of `/`, `~` or `.`, and merging PRs outside `merge_gate` (CLI, REST or GraphQL). Heredoc commit and PR messages are treated as text, not commands. It fails closed on anything it can't parse, and when Python is missing. 90+ test cases cover it.
 - **Session hook** (`hooks/session_start.sh`) loads your last `/handoff` and phase progress into every new session.
 
 ## The crew
@@ -100,6 +100,7 @@ See [examples/HOW_IT_WORKS.md](examples/HOW_IT_WORKS.md) and [examples/PLAN.md](
 Gates make the important checks repeatable and visible. They are not a security boundary against a determined model, so you should know where the edges are:
 
 - **The guard is a seatbelt, not a sandbox.** It stops the mistakes agents actually make. A command written specifically to evade it (an obfuscated script, or a file it writes and then runs) can get past. Use branch protection on GitHub for hard guarantees.
+- **The guard checks the Bash tool only.** On Windows, commands Claude runs through its PowerShell tool aren't checked yet (#11).
 - **The reviewer and the builder share your GitHub account.** `merge_gate` ignores verdicts from other accounts, but it can't tell the reviewer agent from the main session. Branch protection with required human reviews closes that gap.
 - **"Read-only" agents still have Bash** to run `gh` and `git`. They have no Write/Edit tools, and their instructions forbid changes, but that part is enforced by the prompt, not by code.
 - **PLAN.md is editable.** A phase is "done" when its Done-when commands pass, but those commands live in a file the AI can edit. The reviewer flags changes to Done-when lines and phase ticks, and they show up in the PR diff.

@@ -81,6 +81,49 @@ BLOCKED = [
     "git.exe push --force",
     "\"/c/Program Files/Git/cmd/git.exe\" push --force",
     "GH.EXE pr merge 7",
+    # an empty argument must not split the command
+    "git commit -m '' --no-verify",
+    "git push origin \"\" --force",
+    # other shells
+    "fish -c 'git push --force'",
+    "ksh -c 'git reset --hard'",
+    "zsh --command 'git push -f'",
+    "pwsh -c 'git push --force'",
+    "powershell.exe -NoProfile -Command git push --force",
+    "pwsh -NoLogo -com \"gh pr merge 7\"",
+    "pwsh -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
+    "powershell -enc ZwBpAHQA",
+    "powershell \"git push --force\"",
+    "powershell /c \"git push --force\"",
+    "powershell -co \"git push --force\"",
+    "powershell /enc ZwBpAHQA",
+    "powershell -ExecutionPolicy Bypass \"git push --force\"",
+    "pwsh -NoProfile -ep Bypass -Command git push --force",
+    "cmd /c \"git push --force\"",
+    "cmd.exe /C git reset --hard",
+    "cmd //c \"git push --force\"",
+    "cmd /s /c \"git reset --hard\"",
+    # $(...) in the middle of a command
+    "git push origin $(git branch --show-current) --force",
+    "git commit -m $(cat msg.txt) --no-verify",
+    "git reset $(git merge-base HEAD origin/main) --hard",
+    "git push origin $(echo $(whoami)) --force",
+    "git push origin `git branch --show-current` --force",
+    "git reset HEAD~$((1+1)) --hard",
+    "git push origin $(git log -1 --format='%h (x)') --force",
+    "echo '$(' && git push --force && echo ')'",
+    # grouped and control-flow commands
+    "(cd sub && git push --force)",
+    "{ git push --force; }",
+    "npm test || { git reset --hard; }",
+    "if true; then git push --force; fi",
+    "for b in x; do git push -f; done",
+    "! git push --force",
+    # ...while a { } argument doesn't hide one
+    "git commit -m '{}' --no-verify",
+    "git commit -m \"}\" --no-verify",
+    "git push origin } --force",
+    "gh api --jq '{}' -X PUT repos/o/r/pulls/7/merge",
 ]
 
 ALLOWED = [
@@ -112,6 +155,20 @@ ALLOWED = [
     "timeout 120 npm test",
     "git checkout -- src/app.ts",
     "git commit -m 'fix: 修复 naïve — ✓'",
+    "pwsh -c 'git status'",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File build.ps1",
+    "fish -c 'git push -u origin feat/x'",
+    "pwsh -File deploy.ps1 -e staging",
+    "cmd /c \"git status\"",
+    "cmd //c \"npm test\"",
+    "git push -u origin $(git branch --show-current)",
+    "(cd docs && git status)",
+    "if [ -f x ]; then git push -u origin feat/x; fi",
+    "echo $((1 + 2))",
+    "git commit -m 'fix(guard): handle (cd x && y)'",
+    # switching to main after the work is done
+    "git commit -m 'feat: x' && git switch main",
+    "git push && git checkout main && git pull",
 ]
 
 
@@ -149,6 +206,7 @@ def test_blocks_commit_and_bare_push_on_protected_branch(repo):
 def test_tracks_branch_switch_inside_one_command(repo):
     assert guard("git switch -c feat/y && git commit -m 'feat: y'", cwd=repo) == 0
     assert guard("git switch main && git commit -m x", cwd=repo.parent) == 2
+    assert guard("{ git commit -m x; }; git switch -c feat/y", cwd=repo) == 2  # the commit runs on main
 
 
 def test_push_head_resolves_to_current_branch(repo, feature_repo=None):
