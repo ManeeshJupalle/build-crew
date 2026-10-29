@@ -1,3 +1,5 @@
+import pytest
+
 from conftest import git, run_gate
 
 # Built at runtime so this file never contains a real-looking secret itself.
@@ -35,27 +37,22 @@ def test_detects_gitlab_npm_and_hugging_face_tokens(repo):
     (repo / "ci.sh").write_text(f"GL={FAKE_GITLAB}\nNPM={FAKE_NPM}\nHF={FAKE_HF}\n")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 1
-    assert {f["issue"] for f in out["findings"]} == {"GitLab token", "npm token", "Hugging Face token"}
+    assert {f["issue"] for f in out["findings"]} == {"GitLab personal access token", "npm token", "Hugging Face token"}
     assert all(t not in str(out) for t in (FAKE_GITLAB, FAKE_NPM, FAKE_HF)), "values must be masked"
 
 
 def test_near_miss_prefixes_pass(repo):
     feature(repo)
-    (repo / "ci.sh").write_text(f"x = 'hf_short'\ny = '{FAKE_GITLAB[:-1]}'\nz = 'npm_config_cache'\n")
+    (repo / "ci.sh").write_text(f"x = 'hf_short'\nz = 'npm_config_cache'\nw = 'x{FAKE_HF}'\n"
+                                "&hf_servingcellpriorityparametersdescription_h_prio\n")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 0 and out["findings"] == []
 
 
-def test_npm_token_one_char_short_passes(repo):
+@pytest.mark.parametrize("value", [FAKE_GITLAB[:-1], FAKE_NPM[:-1], FAKE_HF[:-1]])
+def test_token_one_char_short_passes(repo, value):
     feature(repo)
-    (repo / "ci.sh").write_text(f"x = '{FAKE_NPM[:-1]}'\n")
-    code, out = run_gate("secret_scan.py", cwd=repo)
-    assert code == 0 and out["findings"] == []
-
-
-def test_hf_token_one_char_short_passes(repo):
-    feature(repo)
-    (repo / "ci.sh").write_text(f"x = '{FAKE_HF[:-1]}'\n")
+    (repo / "ci.sh").write_text(f"x = '{value}'\n")
     code, out = run_gate("secret_scan.py", cwd=repo)
     assert code == 0 and out["findings"] == []
 
