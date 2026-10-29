@@ -166,6 +166,9 @@ ALLOWED = [
     "if [ -f x ]; then git push -u origin feat/x; fi",
     "echo $((1 + 2))",
     "git commit -m 'fix(guard): handle (cd x && y)'",
+    # switching to main after the work is done
+    "git commit -m 'feat: x' && git switch main",
+    "git push && git checkout main && git pull",
 ]
 
 
@@ -203,6 +206,7 @@ def test_blocks_commit_and_bare_push_on_protected_branch(repo):
 def test_tracks_branch_switch_inside_one_command(repo):
     assert guard("git switch -c feat/y && git commit -m 'feat: y'", cwd=repo) == 0
     assert guard("git switch main && git commit -m x", cwd=repo.parent) == 2
+    assert guard("{ git commit -m x; }; git switch -c feat/y", cwd=repo) == 2  # the commit runs on main
 
 
 def test_push_head_resolves_to_current_branch(repo, feature_repo=None):

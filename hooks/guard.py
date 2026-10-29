@@ -309,8 +309,12 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
         tokens = tokenize(cmd)
     except ValueError:
         return "Could not parse this command (unbalanced quotes?), so it can't be verified."
-    # a standalone { } may group commands ({ git push -f; }) or be a plain argument (-m '{}'), so check both ways
+    # a standalone { } may group commands ({ git push -f; }) or be a plain argument (-m '{}'), so check both ways,
+    # each from the same starting branch
+    start = dict(state)
     for braces in (False, True):
+        state.clear()
+        state.update(start)
         for seg in segments(tokens, braces):
             reason = check_segment(seg, state, depth)
             if reason:
