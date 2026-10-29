@@ -94,7 +94,21 @@ def test_finds_pytest_suite_without_packaging_files(tmp_path, name):
 
 
 def test_tests_folder_alone_is_not_python(tmp_path):
-    (tmp_path / "package.json").write_text('{"scripts": {"test": "node --test"}}')
+    (tmp_path / "package.json").write_text("{}")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "app.test.js").write_text("test('x', () => {})\n")
+    assert detected(tmp_path) == []
+
+
+def test_makefile_outranks_a_bare_pytest_suite(tmp_path):
+    (tmp_path / "Makefile").write_text("lint:\n\ttrue\ntest:\n\ttrue\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    pass\n")
+    assert detected(tmp_path) == ["make lint", "make test"]
+
+
+def test_js_repo_with_a_python_suite_keeps_only_npm_checks(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "node --test"}}')
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    pass\n")
     assert detected(tmp_path) == ["npm run test"]

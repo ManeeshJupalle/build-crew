@@ -50,9 +50,7 @@ def python_tool(root: Path, tool: str) -> str:
 
 def python_checks(root: Path) -> list[tuple[str, str, str]]:
     py = root / "pyproject.toml"
-    tests = root / "tests"
-    suite = (tests / "conftest.py").exists() or any(tests.glob("test_*.py")) or any(tests.glob("*_test.py"))
-    if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists() or suite):
+    if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists()):
         return []
     cfg = py.read_text(encoding="utf-8") if py.exists() else ""
     out = []
@@ -90,9 +88,17 @@ def make_checks(root: Path) -> list[tuple[str, str, str]]:
     return [(t, f"make {t}", "make") for t in ("lint", "test") if t in targets]
 
 
+def pytest_suite_checks(root: Path) -> list[tuple[str, str, str]]:
+    tests = root / "tests"
+    if not ((tests / "conftest.py").exists() or any(tests.glob("test_*.py")) or any(tests.glob("*_test.py"))):
+        return []
+    t = python_tool(root, "pytest")
+    return [("test", f"{shlex.quote(t)} -q", t)]
+
+
 def detect(root: Path) -> list[tuple[str, str, str]]:
     found = node_checks(root) + python_checks(root) + rust_checks(root) + go_checks(root)
-    return found or make_checks(root)
+    return found or make_checks(root) or pytest_suite_checks(root)
 
 
 def docs_only_change(root: Path) -> bool | None:
