@@ -60,6 +60,7 @@ def local_branch_exists(name: str) -> bool:
 
 
 HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^[ \t]*\2[ \t]*$", re.S | re.M)
+SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
 
 
 def strip_heredocs(cmd: str) -> str:
@@ -282,7 +283,7 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
         return check_powershell(args, state, depth)
     if prog == "cmd":
         for k, a in enumerate(args):
-            if a.lower() in ("/c", "/k", "/r"):
+            if re.fullmatch(r"/+[ckr]", a, re.I):  # Git Bash turns /c into a path, so it's written //c there
                 return check(" ".join(args[k + 1:]), depth + 1, state)
     if prog == "eval":
         return check(" ".join(args), depth + 1, state)
@@ -300,11 +301,14 @@ def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
         return "Command nesting too deep to verify."
     state = {} if state is None else state
     cmd = strip_heredocs(cmd)
-    # commands inside $(...) and backticks run too
-    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", cmd):
-        reason = check(inner[0] or inner[1], depth + 1, state)
-        if reason:
-            return reason
+    # commands inside $(...) and backticks run too: check them, innermost first, then leave a plain word in
+    # their place so their parentheses can't split the command around them
+    while SUBST.search(cmd):
+        for inner in SUBST.findall(cmd):
+            reason = check(inner[0] or inner[1], depth + 1, state)
+            if reason:
+                return reason
+        cmd = SUBST.sub("_", cmd)
     try:
         tokens = tokenize(cmd)
     except ValueError:
