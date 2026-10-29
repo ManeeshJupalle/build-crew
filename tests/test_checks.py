@@ -79,3 +79,22 @@ def test_requirements_txt_is_not_docs(repo):
     (repo / "requirements.txt").write_text("requests\n")
     code, out = run_gate("checks.py", cwd=repo, env=env(repo))
     assert code == 1
+
+
+def detected(root):
+    _, out = run_gate("checks.py", cwd=root, env={**env(root), "PATH": "/nonexistent"})  # list, don't run
+    return [c["cmd"] for c in out["checks"]]
+
+
+@pytest.mark.parametrize("name", ["test_x.py", "x_test.py", "conftest.py"])
+def test_finds_pytest_suite_without_packaging_files(tmp_path, name):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / name).write_text("def test_x():\n    pass\n")
+    assert detected(tmp_path) == ["pytest -q"]
+
+
+def test_tests_folder_alone_is_not_python(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "node --test"}}')
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "app.test.js").write_text("test('x', () => {})\n")
+    assert detected(tmp_path) == ["npm run test"]

@@ -50,7 +50,9 @@ def python_tool(root: Path, tool: str) -> str:
 
 def python_checks(root: Path) -> list[tuple[str, str, str]]:
     py = root / "pyproject.toml"
-    if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists()):
+    tests = root / "tests"
+    suite = (tests / "conftest.py").exists() or any(tests.glob("test_*.py")) or any(tests.glob("*_test.py"))
+    if not (py.exists() or list(root.glob("requirements*.txt")) or (root / "setup.py").exists() or suite):
         return []
     cfg = py.read_text(encoding="utf-8") if py.exists() else ""
     out = []
