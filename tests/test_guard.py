@@ -128,6 +128,8 @@ BLOCKED = [
     # PowerShell payloads are parsed as PowerShell
     "pwsh -c 'git push --f`orce'",
     "pwsh -c 'npm test; if ($?) { git push --force }'",
+    "pwsh -c 'rm -rf ~'",
+    "powershell -Command 'rm -rf .'",
 ]
 
 ALLOWED = [
@@ -227,6 +229,14 @@ PS_BLOCKED = [
     "cmd /c \"git push --force\"",
     "pwsh -c { git push --force }",
     "powershell -Command \"& {git push --force}\"",
+    # an assignment still runs the command
+    "$out = git push --force 2>&1",
+    "$null = git reset --hard HEAD~1",
+    "$res = gh pr merge 26 --squash",
+    "$out=git push origin main",
+    "[string]$a = $b = git push -f",
+    "$log += git push --force",
+    "rm -rf ~",
     # fails closed
     "git commit -m 'unbalanced",
     "git push --force`",
@@ -254,6 +264,9 @@ PS_ALLOWED = [
     "Write-Output 'git push --force'",
     "pwsh -NoProfile -File build.ps1",
     "git commit -m 'feat: x' && git switch main",
+    "$branch = git branch --show-current",
+    "$out = git push -u origin feat/x 2>&1",
+    "if ($x -eq 1) { git status }",
 ]
 
 

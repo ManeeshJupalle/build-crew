@@ -37,6 +37,7 @@ WINDOWS_ROOTS = re.compile(r"([a-z]:|\$env:(userprofile|home))(/\*?)?", re.I)  #
 PS_REMOVE = {"remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"}
 PS_QUOTES = {"'": "'", "‘": "'", "’": "'", "‚": "'", "‛": "'", '"': '"', "“": '"', "”": '"', "„": '"'}
 PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n.*?\r?\n\1@", re.S)
+PS_VAR = r"(?:\[[\w.]+\])*\$[\w:.]+"  # $out, $script:x, [string]$x
 SEP, GROUP = object(), object()  # PowerShell tokens: ; | & newline, and ( ) { }
 
 
@@ -383,13 +384,29 @@ def ps_tokenize(cmd: str) -> list:
     return out
 
 
+def strip_ps_assignment(seg: list[str]) -> list[str]:
+    """`$out = git push --force` still runs git push: drop the variable and the = (also $a = $b = ..., +=)."""
+    while seg:
+        joined = len(seg) > 1 and re.fullmatch(PS_VAR, seg[0])
+        head, rest = (seg[0] + seg[1], seg[2:]) if joined else (seg[0], seg[1:])
+        m = re.fullmatch(PS_VAR + r"[-+*/%]?=(.*)", head, re.S)
+        if not m:
+            return seg
+        seg = ([m.group(1)] if m.group(1) else []) + rest
+    return seg
+
+
 def check_ps_segment(seg: list[str], state: dict, depth: int) -> str | None:
     m = re.fullmatch(r"\$env:(\w+)=(.*)", "".join(seg), re.I | re.S)
     if m and HOOK_SKIP_ENV.match(f"{m.group(1).upper()}={m.group(2)}"):
         return f"Skipping git hooks via $env:{m.group(1)} is forbidden."
+    seg = strip_ps_assignment(seg)
+    if not seg:
+        return None
     prog = prog_name(seg[0])
     if prog in PS_REMOVE:
-        return check_remove_item(seg[1:])
+        # on Linux and macOS, rm in pwsh is /bin/rm, so check it both ways
+        return check_remove_item(seg[1:]) or (check_rm(seg[1:]) if prog == "rm" else None)
     if prog in ("iex", "invoke-expression"):
         args = [a for a in seg[1:] if not (len(a) > 1 and a[0] == "-" and "command".startswith(a[1:].lower()))]
         if not args:
