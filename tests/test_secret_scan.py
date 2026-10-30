@@ -49,6 +49,26 @@ def test_near_miss_prefixes_pass(repo):
     assert code == 0 and out["findings"] == []
 
 
+@pytest.mark.parametrize("prefix", ["é", "Ω", "中"])
+@pytest.mark.parametrize("token,label", [(FAKE_NPM, "npm token"), (FAKE_HF, "Hugging Face token")])
+def test_detects_token_after_non_ascii_letter(repo, prefix, token, label):
+    feature(repo)
+    (repo / "ci.sh").write_text(prefix + token + "\n", encoding="utf-8")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 1
+    assert {f["issue"] for f in out["findings"]} == {label}
+    assert token not in str(out), "values must be masked"
+
+
+@pytest.mark.parametrize("value", ["x" + FAKE_HF, "_" + FAKE_HF, "1" + FAKE_HF,
+                                  FAKE_HF + "A", FAKE_HF + "_"])
+def test_hugging_face_token_inside_longer_ascii_word_passes(repo, value):
+    feature(repo)
+    (repo / "ci.sh").write_text(value + "\n", encoding="utf-8")
+    code, out = run_gate("secret_scan.py", cwd=repo)
+    assert code == 0 and out["findings"] == []
+
+
 @pytest.mark.parametrize("value", ["x" + FAKE_NPM, "_" + FAKE_NPM, "1" + FAKE_NPM,
                                   FAKE_NPM + "A", FAKE_NPM + "_"])
 def test_npm_token_inside_longer_word_passes(repo, value):
