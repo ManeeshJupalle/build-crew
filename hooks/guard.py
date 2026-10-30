@@ -13,6 +13,7 @@ This is a seatbelt, not a sandbox: see "Limits" in the README.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import shlex
@@ -30,7 +31,7 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcs
 KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "export"}  # what follows is a command
 PLACEHOLDERS = {c: chr(0xE000 + n) for n, c in enumerate(";&|\n(){}#<")}  # stand-ins for quoted separators
 RESTORE = {ord(v): k for k, v in PLACEHOLDERS.items()}
-COMMENT_START = set(" \t\r\n;&|()")  # a # right after one of these starts a comment
+COMMENT_START = set(" \t\n;&|()")  # a # right after one of these starts a comment
 SUBST = ""  # stands for a $(...) or `...` substitution, whose command is checked on its own
 POWERSHELLS = {"pwsh", "powershell"}
 PS_VALUE_PARAMS = ("executionpolicy", "windowstyle", "inputformat", "outputformat", "version", "psconsolefile",
@@ -41,17 +42,25 @@ DANGEROUS_RM_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/
 WINDOWS_ROOTS = re.compile(r"([a-z]:|\$env:(userprofile|home))(/\*?)?", re.I)  # C:\, $env:USERPROFILE\*
 PS_REMOVE = {"remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"}
 PS_QUOTES = {"'": "'", "‘": "'", "’": "'", "‚": "'", "‛": "'", '"': '"', "“": '"', "”": '"', "„": '"'}
-PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n.*?\r?\n\1@", re.S)
+PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n")  # opens @'...'@ or @"..."@, which closes at a line starting '@
 PS_VAR = r"(?:\[[\w.]+\])*\$[\w:.]+"  # $out, $script:x, [string]$x
 SEP, PIPE, GROUP = object(), object(), object()  # PowerShell tokens: ; & newline, |, and ( ) { }
 READS_STDIN = "A shell reading its commands from stdin (a pipe, a heredoc or -) can't be verified."
-# Claude Code runs the command if this hook times out (60s), so a command too long or too slow to check is blocked
+# Claude Code runs the command if this hook times out (60s), so a command too long or too slow to check is blocked.
+# Slow ones: thousands of git commits or switches, each asking git about branches, or a long chain of pwsh -wd /c,
+# each read both ways
 MAX_COMMAND = 100_000  # characters
-TIME_LIMIT = 10  # seconds: each git commit or switch asks git about branches, and thousands of them add up
+TIME_LIMIT = 10  # seconds
 STARTED = time.monotonic()
 
 
+def check_time() -> None:
+    if time.monotonic() - STARTED > TIME_LIMIT:
+        raise TimeoutError("Checking this command took too long, so it can't be verified.")
+
+
 def current_branch() -> str:
+    check_time()
     try:
         return subprocess.run(["git", "branch", "--show-current"], capture_output=True,
                               text=True, timeout=5).stdout.strip()
@@ -69,6 +78,7 @@ def is_protected_ref(ref: str, branch: str) -> bool:
 
 
 def local_branch_exists(name: str) -> bool:
+    check_time()  # git switch with thousands of names would ask git about each
     try:
         return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
                               capture_output=True, timeout=5).returncode == 0
@@ -76,12 +86,45 @@ def local_branch_exists(name: str) -> bool:
         return False
 
 
-HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^[ \t]*\2[ \t]*$", re.S | re.M)
+HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])\1")
 
 
 def strip_heredocs(cmd: str) -> str:
-    """Heredoc bodies are data (commit messages, PR bodies), not commands: drop them."""
-    return HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
+    """Heredoc bodies are data (commit messages, PR bodies), not commands: drop them, keeping the line each starts on.
+    A heredoc with no closing line is left alone. Each closing line is looked up rather than searched for, since a
+    regex search per heredoc takes quadratic time on a long command, and the hook can't stop a regex at its limit."""
+    closers, pos = {}, 0  # a line's text -> where lines with that text end
+    for line in cmd.split("\n"):
+        pos += len(line)
+        closers.setdefault(line.strip(" \t"), []).append(pos)
+        pos += 1
+    out, i = [], 0
+    for m in HEREDOC.finditer(cmd):
+        body = cmd.find("\n", m.end()) + 1
+        if m.start() < i or not body:
+            continue
+        ends = closers.get(m.group(2), [])
+        k = bisect.bisect_left(ends, body)
+        if k < len(ends):
+            out.append(cmd[i:body - 1])
+            i = ends[k]
+    return "".join(out) + cmd[i:]
+
+
+def strip_herestrings(cmd: str) -> str:
+    """PowerShell here-strings are data too: replace each with ''. Like strip_heredocs(), in linear time: once the
+    next closing '@ is found, later here-strings reuse it until they pass it."""
+    out, i, closers = [], 0, {}
+    for m in PS_HERESTRING.finditer(cmd):
+        if m.start() < i:
+            continue
+        q, close = m.group(1), closers.get(m.group(1))
+        if close is None or 0 <= close < m.end() - 1:
+            close = closers[q] = cmd.find("\n" + q + "@", m.end() - 1)
+        if close >= 0:
+            out.append(cmd[i:m.start()] + "''")
+            i = close + 3
+    return "".join(out) + cmd[i:]
 
 
 def prog_name(tok: str) -> str:
@@ -136,6 +179,9 @@ def prescan(cmd: str) -> tuple[str, list[str]]:
             nxt = cmd[i + 1]
             if nxt != "\n":  # backslash-newline continues the line
                 out.append("\\" + PLACEHOLDERS.get(nxt, nxt) if quote else PLACEHOLDERS.get(nxt, "\\" + nxt))
+            i += 2
+        elif quote != "'" and cmd.startswith("$$", i):  # the shell's PID: $$'x' is $$ and then 'x'
+            out.append("$$")
             i += 2
         elif quote != "'" and (c == "`" or cmd.startswith("$(", i)):
             end = closing(cmd, i)
@@ -389,7 +435,7 @@ def check_powershell(args: list[str], state: dict, depth: int, stdin: bool = Fal
     first argument. Parameters start with - or /, ignore case and can be shortened (-c, -co, /enc).
     -EncodedCommand is base64, so it can't be checked. After -File come the script's own arguments.
     With no command at all, it runs what's piped to it."""
-    k, command_read = 0, False
+    k = 0
     while k < len(args) and args[k][:1] in ("-", "/"):
         if args[k] == "-":
             return READS_STDIN
@@ -402,12 +448,8 @@ def check_powershell(args: list[str], state: dict, depth: int, stdin: bool = Fal
         if kind == "file":
             return READS_STDIN if args[k + 1:k + 2] == ["-"] else None
         nxt = args[k + 1] if kind == "value" and k + 1 < len(args) else "-"
-        other = ps_param(nxt) if nxt[:1] == "/" else ""
-        if other in ("encoded", "file") or (other == "command" and not command_read):
-            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check that reading too.
-            # The first -Command reading is enough: a later one runs the end of the same text, and checking each
-            # would take quadratic time on a long chain of -wd /c
-            command_read = command_read or other == "command"
+        if nxt[:1] == "/" and ps_param(nxt) in ("encoded", "command", "file"):
+            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check that reading too
             reason = check_powershell(args[k + 1:], dict(state), depth, stdin)
             if reason:
                 return reason
@@ -421,8 +463,7 @@ def check_powershell(args: list[str], state: dict, depth: int, stdin: bool = Fal
 
 
 def check_segment(seg: list[str], state: dict, depth: int, stdin: bool = False) -> str | None:
-    if time.monotonic() - STARTED > TIME_LIMIT:
-        return "Checking this command took too long, so it can't be verified."
+    check_time()
     rest = strip_prefix(seg)
     for t in seg[:len(seg) - len(rest)]:  # assignments can follow keywords and wrappers too: env HUSKY=0 git ...
         if HOOK_SKIP_ENV.match(t):
@@ -559,7 +600,7 @@ def check_ps(cmd: str, depth: int, state: dict) -> str | None:
         if reason:
             return reason
     try:
-        tokens = ps_tokenize(PS_HERESTRING.sub("''", cmd))  # here-strings are data, like heredocs
+        tokens = ps_tokenize(strip_herestrings(cmd))
     except ValueError:
         return "Could not parse this command (unbalanced quotes?), so it can't be verified."
     # ( ) and { } group commands (if ($?) { git push }) but also wrap arguments (git commit -m (Get-Date) --no-verify),
@@ -618,6 +659,8 @@ def main() -> int:
             return 0
         cmd = (data.get("tool_input") or {}).get("command", "")
         reason = "Command too long to verify." if len(cmd) > MAX_COMMAND else check(cmd, shell=shell)
+    except TimeoutError as e:
+        reason = str(e)
     except Exception as e:
         reason = f"Could not read or check this command ({type(e).__name__}), so it can't be verified."
     if reason:

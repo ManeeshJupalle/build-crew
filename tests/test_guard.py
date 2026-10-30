@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -174,6 +175,10 @@ BLOCKED = [
     # nested backticks, and $'...' quoting
     "echo `echo \\`git push --force\\``",
     "git commit -m $'fix: don\\'t crash' --no-verify",
+    # from the review of #35: $$ is the PID, a carriage return isn't a blank, and every /c reading counts
+    "echo $$'\\'; git push --force; echo '\\'",
+    "git status\r# x; git push --force",
+    "pwsh -wd /c -i /c /usr/bin/git push --force",
 ]
 
 # blocked because they can't be parsed, the only cases allowed to block that way
@@ -426,18 +431,25 @@ def test_blocks_when_the_check_crashes():
     # a crash would exit 1, which Claude Code treats as a non-blocking error and runs the command
     bad = json.dumps({"tool_name": "Bash", "tool_input": {"command": ["git", "push", "--force"]}}).encode()
     res = subprocess.run([sys.executable, str(HOOKS / "guard.py")], input=bad, capture_output=True)
-    assert res.returncode == 2 and b"TypeError" in res.stderr
+    assert res.returncode == 2 and b"Could not read or check this command" in res.stderr
 
 
 def test_blocks_commands_too_long_or_slow_to_check(monkeypatch):
     # if the hook times out, Claude Code runs the command
     res = run_guard("git status && " * 10_000)
     assert res.returncode == 2 and b"too long" in res.stderr
+    for cmd, tool in (("cat <<" + "A" * 99_000, "Bash"), ("cat <<A\n" * 12_000, "Bash"), ("@'\n" * 30_000, "PowerShell")):
+        start = time.monotonic()
+        run_guard(cmd, tool)
+        assert time.monotonic() - start < 10, cmd[:10]  # no regex that rescans the rest of the command
     monkeypatch.syspath_prepend(str(HOOKS))
     import guard as g
+    monkeypatch.setattr(g, "STARTED", time.monotonic())
     assert g.check("git status") is None
-    monkeypatch.setattr(g, "STARTED", g.STARTED - g.TIME_LIMIT - 1)
-    assert "took too long" in g.check("git status")
+    monkeypatch.setattr(g, "STARTED", time.monotonic() - g.TIME_LIMIT - 1)
+    for slow in (lambda: g.check("git status"), g.current_branch, lambda: g.local_branch_exists("x")):
+        with pytest.raises(TimeoutError):
+            slow()
 
 
 def hook_command() -> str:
