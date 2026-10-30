@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+### Changed
+- Tested on Python 3.14 as well as 3.9 and 3.13, on macOS, Linux and Windows. (#15, by @Vamsi-2581)
+
+### Fixed
+- `checks.py` runs pytest in a repo whose only Python is a `tests/` folder (`conftest.py`, `test_*.py` or `*_test.py`), when no other stack or Makefile matched. Before, it reported NOT VERIFIED. (#17, by @babyhuey)
+
+### Security
+- `secret_scan` catches GitLab personal access tokens (`glpat-`), npm tokens (`npm_`) and Hugging Face tokens (`hf_`). (#10, by @babyhuey)
+
 ## [0.2.0] - 2026-10-28
 ### Added
 - Runs on macOS, Linux and Windows. Gates and hooks start through `run.sh`, which finds Python 3.9+ as `python3`, `python` or `py`. (#4)
