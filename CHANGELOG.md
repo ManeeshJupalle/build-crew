@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30
+### Security
+- `secret_scan` reports npm and Hugging Face tokens that come right after a non-ASCII letter, such as `é`. Before, it missed them. (#29, by @Golden007-prog)
+
 ## [0.4.0] - 2026-10-30
 ### Added
 - The guard checks commands from Claude Code's PowerShell tool as well as Bash. PowerShell gets its own parser for quoting, escapes, here-strings, brackets and assignments, so `$out = git push --force` and `Remove-Item -Recurse -Force ~` are caught. (#26, #36)
