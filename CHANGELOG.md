@@ -22,6 +22,7 @@
 - More commands that got past the guard are now caught:
   - quoted separators, subshells, substitutions used as option values, `HUSKY=0` after `env`, `sudo` or `then`, `cmd /cgit`, and `pwsh -i -enc …` (#28)
   - a reset hidden between two apostrophes in comments (#35)
+  - a command after `$'…'` quoting with `\'` in it, as in `echo $'a\'b' ; git push --force ; echo \'` (#35)
 - From Bash, recursive deletes of `C:/` and `$env:USERPROFILE` are blocked. (#26)
 
 ## [0.3.1] - 2026-10-30
