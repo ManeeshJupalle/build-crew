@@ -159,6 +159,7 @@ BLOCKED = [
     "pwsh -WorkingDirectory /c -Command 'Remove-Item -Recurse -Force ~'",
     "pwsh -wd /f -c 'git -C D:/repo push --force'",
     "pwsh -wd /c -enc ZwBpAHQA",
+    "pwsh -wd /c -c 'git switch main' && git commit -m x",
     # fails closed
     "echo $(git status",
 ]

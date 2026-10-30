@@ -328,6 +328,20 @@ def check_remove_item(args: list[str]) -> str | None:
     return None
 
 
+def ps_param(arg: str) -> str:
+    """What a pwsh / powershell parameter does: encoded, command, file, value (takes one) or switch."""
+    name = arg.lstrip("-/").lower()
+    if name in ("e", "ec") or (len(name) > 1 and "encodedcommand".startswith(name)):
+        return "encoded"
+    if name in ("c", "cwa") or (len(name) > 1 and "commandwithargs".startswith(name)):
+        return "command"
+    if name == "f" or (len(name) > 1 and "file".startswith(name)):
+        return "file"
+    if name in PS_VALUE_ALIASES or (len(name) > 1 and any(p.startswith(name) for p in PS_VALUE_PARAMS)):
+        return "value"
+    return "switch"
+
+
 def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
     """PowerShell runs everything after -Command as one command, and Windows PowerShell does the same with a bare
     first argument. Parameters start with - or /, ignore case and can be shortened (-c, -co, /enc).
@@ -337,20 +351,22 @@ def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
     while k < len(args) and args[k][:1] in ("-", "/"):
         if args[k] == "-":
             return stdin
-        name = args[k].lstrip("-/").lower()
-        if name in ("e", "ec") or (len(name) > 1 and "encodedcommand".startswith(name)):
+        kind = ps_param(args[k])
+        if kind == "encoded":
             return "PowerShell -EncodedCommand can't be verified."
-        if name in ("c", "cwa") or (len(name) > 1 and "commandwithargs".startswith(name)):
+        if kind == "command":
             k += 1
             break
-        if name == "f" or (len(name) > 1 and "file".startswith(name)):
+        if kind == "file":
             return stdin if args[k + 1:k + 2] == ["-"] else None
-        takes_value = name in PS_VALUE_ALIASES or (len(name) > 1 and any(p.startswith(name) for p in PS_VALUE_PARAMS))
-        if takes_value and args[k + 1:k + 2] and args[k + 1][:1] == "/":
-            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check both readings
-            return check_powershell(args[k + 2:], dict(state), depth) or check_powershell(args[k + 1:], state, depth)
+        nxt = args[k + 1] if kind == "value" and k + 1 < len(args) else "-"
+        if nxt[:1] == "/" and ps_param(nxt) in ("encoded", "command", "file"):
+            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check that reading too
+            reason = check_powershell(args[k + 1:], dict(state), depth)
+            if reason:
+                return reason
         # a value never starts with -: in pwsh 7, -i is the -Interactive switch, not -InputFormat
-        k += 2 if takes_value and args[k + 1:k + 2] and args[k + 1][:1] != "-" else 1
+        k += 1 if nxt[:1] == "-" else 2
     if args[k:k + 1] == ["-"]:
         return stdin
     return check(" ".join(args[k:]), depth + 1, state, "powershell") if k < len(args) else None
