@@ -26,11 +26,12 @@ BASE = {
 }
 
 
-def gate(tmp_path, state, *flags, cwd=None):
+def gate(tmp_path, state, *flags, cwd=None, fake=FAKE):
     sp = tmp_path / "gh.json"
     sp.write_text(json.dumps(state))
+    # quoted, so paths with spaces stay one word each
     code, out = run_gate("merge_gate.py", "7", *flags, cwd=cwd or tmp_path,
-                         env={"BUILD_CREW_GH": f"{sys.executable} {FAKE}", "FAKE_GH_STATE": str(sp),
+                         env={"BUILD_CREW_GH": f'"{sys.executable}" "{fake}"', "FAKE_GH_STATE": str(sp),
                               "BUILD_CREW_SLEEP": "0"})
     return code, out, json.loads(sp.read_text())
 
@@ -59,6 +60,14 @@ def test_all_gates_pass_and_merges(tmp_path):
 def test_check_only_does_not_merge(tmp_path):
     code, out, st = gate(tmp_path, copy.deepcopy(BASE))
     assert code == 0 and "merged" not in out and not merged(st)
+
+
+def test_fake_gh_in_a_path_with_spaces(tmp_path):
+    fake = tmp_path / "with space" / FAKE.name
+    fake.parent.mkdir()
+    fake.write_bytes(FAKE.read_bytes())
+    code, out, st = gate(tmp_path, copy.deepcopy(BASE), fake=fake)
+    assert code == 0 and st["calls"]
 
 
 @pytest.mark.parametrize("state,failing", [
