@@ -7,12 +7,22 @@
 - The guard checks commands from Claude Code's PowerShell tool as well as Bash. PowerShell gets its own parser for quoting, escapes, here-strings, brackets and assignments, so `$out = git push --force` and `Remove-Item -Recurse -Force ~` are caught. (#26, #36)
 
 ### Changed
-- The guard blocks a shell that reads its commands from a pipe or heredoc, such as `echo … | bash`, `bash <<'EOF'` or `curl … | sh`, because it can't see what they run. (#35)
+- The guard blocks a shell that reads its commands from stdin, because it can't see what they run. This covers `pwsh -Command -` (#28) and a pipe or heredoc into bash, sh or PowerShell, such as `echo … | bash`, `bash <<'EOF'` or `curl … | sh` (#35).
 - It also blocks any command it can't check in time: when it crashes, when a command is over 100,000 characters, or after 10s of checking. Before, a crash or a hook timeout let the command run. (#35)
 
 ### Fixed
-- More commands that got past the guard are now caught: quoted separators, subshells, substitutions used as option values, `HUSKY=0` after `env`, `sudo` or `then`, `cmd /cgit`, a `(` or apostrophe in a comment, nested backticks, and `$'…'` quoting. (#28, #35)
-- PowerShell commands that were wrongly blocked are now allowed: `rm -Force *`, a command in brackets used as an argument (`Remove-Item -Recurse (Join-Path …)`), and `$x = 'HUSKY=0'`. (#36)
+- Bash commands that were wrongly blocked are now allowed:
+  - a single-quoted `$(git push --force)` in a commit message (#28)
+  - `powershell -c 'Get-ChildItem "D:\"'` (#26)
+  - `git status # it's fine` (#35)
+  - `git commit -m $'fix: don\'t crash'` (#35)
+  - `rm -Force *` inside `pwsh -c` (#36)
+
+### Security
+- More commands that got past the guard are now caught:
+  - quoted separators, subshells, substitutions used as option values, `HUSKY=0` after `env`, `sudo` or `then`, `cmd /cgit`, and `pwsh -i -enc …` (#28)
+  - a reset hidden between two apostrophes in comments (#35)
+- From Bash, recursive deletes of `C:/` and `$env:USERPROFILE` are blocked. (#26)
 
 ## [0.3.1] - 2026-10-30
 ### Changed
