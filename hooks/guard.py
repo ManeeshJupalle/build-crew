@@ -18,6 +18,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 PROTECTED = re.compile(r"^(main|master|develop|release/.+)$")
 SEPARATORS = {"&&", "||", ";", "|", "&", "\n", "|&", ";;"}
@@ -27,8 +28,9 @@ WRAPPER_VALUE_FLAGS = {"-u", "-g", "-n", "-s", "-k", "-c", "-p", "-o", "-e", "-i
 HOOK_SKIP_ENV = re.compile(r"^(HUSKY=0|HUSKY_SKIP_HOOKS=|HUSKY_SKIP_INSTALL=|SKIP=|PRE_COMMIT_ALLOW_NO_CONFIG=|GIT_HOOKS_PATH=)")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"}
 KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "export"}  # what follows is a command
-PLACEHOLDERS = {c: chr(0xE000 + n) for n, c in enumerate(";&|\n(){}#")}  # stand-ins for quoted separators
+PLACEHOLDERS = {c: chr(0xE000 + n) for n, c in enumerate(";&|\n(){}#<")}  # stand-ins for quoted separators
 RESTORE = {ord(v): k for k, v in PLACEHOLDERS.items()}
+COMMENT_START = set(" \t\r\n;&|()")  # a # right after one of these starts a comment
 SUBST = ""  # stands for a $(...) or `...` substitution, whose command is checked on its own
 POWERSHELLS = {"pwsh", "powershell"}
 PS_VALUE_PARAMS = ("executionpolicy", "windowstyle", "inputformat", "outputformat", "version", "psconsolefile",
@@ -41,7 +43,12 @@ PS_REMOVE = {"remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"}
 PS_QUOTES = {"'": "'", "‘": "'", "’": "'", "‚": "'", "‛": "'", '"': '"', "“": '"', "”": '"', "„": '"'}
 PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n.*?\r?\n\1@", re.S)
 PS_VAR = r"(?:\[[\w.]+\])*\$[\w:.]+"  # $out, $script:x, [string]$x
-SEP, GROUP = object(), object()  # PowerShell tokens: ; | & newline, and ( ) { }
+SEP, PIPE, GROUP = object(), object(), object()  # PowerShell tokens: ; & newline, |, and ( ) { }
+READS_STDIN = "A shell reading its commands from stdin (a pipe, a heredoc or -) can't be verified."
+# Claude Code runs the command if this hook times out (60s), so a command too long or too slow to check is blocked
+MAX_COMMAND = 100_000  # characters
+TIME_LIMIT = 10  # seconds: each git commit or switch asks git about branches, and thousands of them add up
+STARTED = time.monotonic()
 
 
 def current_branch() -> str:
@@ -134,9 +141,23 @@ def prescan(cmd: str) -> tuple[str, list[str]]:
             end = closing(cmd, i)
             if end < 0:
                 raise ValueError("unbalanced substitution")
-            inner.append(cmd[i + 1 if c == "`" else i + 2:end - 1])
+            # inside `...`, \` \$ and \\ stand for the plain characters, so `echo \`git push\`` nests
+            inner.append(re.sub(r"\\([`$\\])", r"\1", cmd[i + 1:end - 1]) if c == "`" else cmd[i + 2:end - 1])
             out.append(SUBST)
             i = end
+        elif quote is None and cmd.startswith("$'", i):  # $'...' quotes like '...', but \' is a quote inside it
+            j, text = i + 2, []
+            while j < len(cmd) and cmd[j] != "'":
+                j += cmd[j] == "\\"
+                text.append(PLACEHOLDERS.get(cmd[j:j + 1], cmd[j:j + 1]))
+                j += 1
+            if j >= len(cmd):
+                raise ValueError("unbalanced quotes")
+            out.append("'" + "".join(text).replace("'", "'\"'\"'") + "'")
+            i = j + 1
+        elif c == "#" and quote is None and (not out or out[-1] in COMMENT_START):  # a comment runs to the line's end
+            j = cmd.find("\n", i)
+            i = j if j >= 0 else len(cmd)
         elif c in "'\"" and quote in (None, c):
             quote = None if quote else c
             out.append(c)
@@ -151,26 +172,24 @@ def tokenize(cmd: str) -> list[str]:
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|\n()")
     lex.whitespace_split = True
     lex.whitespace = " \t\r"  # keep newlines as separators
-    lex.commenters = ""         # we drop comments per segment, so a comment can't swallow the next line
+    lex.commenters = ""         # prescan() already dropped comments
     return list(lex)
 
 
-def segments(tokens: list[str], braces: bool) -> list[list[str]]:
+def segments(tokens: list[str], braces: bool) -> list[tuple[list[str], bool]]:
+    """Each command, and whether a pipe feeds it."""
     seps = set(";&|\n(){}") if braces else set(";&|\n()")
-    segs, cur, comment = [], [], False
+    segs, cur, piped = [], [], False
     for t in tokens:
         if t in SEPARATORS or (t and set(t) <= seps):  # an empty argument ('') is not a separator
             if cur:
-                segs.append(cur)
-            cur, comment = [], False
-        elif comment:
-            continue
-        elif t.startswith("#") and " " not in t:  # a shell comment runs to the end of the line
-            comment = True
+                segs.append((cur, piped))
+            piped = t.count("|") == 1 or (piped and not cur)  # | and |& pipe, || doesn't; x | { bash; } still pipes
+            cur = []
         else:
             cur.append(t)
     if cur:
-        segs.append(cur)
+        segs.append((cur, piped))
     return segs
 
 
@@ -190,6 +209,29 @@ def strip_prefix(seg: list[str]) -> list[str]:
         else:
             break
     return seg[i:]
+
+
+def drop_stdin_redirects(seg: list[str]) -> tuple[list[str], bool]:
+    """Drop <<EOF, < file and <<< text from a command, and say whether it had any. A quoted < is a placeholder."""
+    words, found, k = [], False, 0
+    while k < len(seg):
+        if seg[k][:1] == "<":
+            found = True
+            k += 2 if not seg[k].strip("<-") else 1  # a bare < or <<< takes the next word
+        else:
+            words.append(seg[k])
+            k += 1
+    return words, found
+
+
+def shell_script(args: list[str]) -> str | None:
+    """The script file bash, sh and the like run, or None when they read their commands from stdin (none, or -s)."""
+    k = 0
+    while k < len(args) and args[k][:1] in ("-", "+"):
+        if "s" in short_flags(args[k]):
+            return None
+        k += 2 if args[k] in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file") else 1
+    return args[k] if k < len(args) else None
 
 
 def check_git(args: list[str], state: dict) -> str | None:
@@ -342,15 +384,15 @@ def ps_param(arg: str) -> str:
     return "switch"
 
 
-def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
+def check_powershell(args: list[str], state: dict, depth: int, stdin: bool = False) -> str | None:
     """PowerShell runs everything after -Command as one command, and Windows PowerShell does the same with a bare
     first argument. Parameters start with - or /, ignore case and can be shortened (-c, -co, /enc).
-    -EncodedCommand is base64, so it can't be checked. After -File come the script's own arguments."""
-    stdin = "PowerShell reading its command from stdin (-) can't be verified."
-    k = 0
+    -EncodedCommand is base64, so it can't be checked. After -File come the script's own arguments.
+    With no command at all, it runs what's piped to it."""
+    k, command_read = 0, False
     while k < len(args) and args[k][:1] in ("-", "/"):
         if args[k] == "-":
-            return stdin
+            return READS_STDIN
         kind = ps_param(args[k])
         if kind == "encoded":
             return "PowerShell -EncodedCommand can't be verified."
@@ -358,21 +400,29 @@ def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
             k += 1
             break
         if kind == "file":
-            return stdin if args[k + 1:k + 2] == ["-"] else None
+            return READS_STDIN if args[k + 1:k + 2] == ["-"] else None
         nxt = args[k + 1] if kind == "value" and k + 1 < len(args) else "-"
-        if nxt[:1] == "/" and ps_param(nxt) in ("encoded", "command", "file"):
-            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check that reading too
-            reason = check_powershell(args[k + 1:], dict(state), depth)
+        other = ps_param(nxt) if nxt[:1] == "/" else ""
+        if other in ("encoded", "file") or (other == "command" and not command_read):
+            # /c can be a value (a Git Bash path: -wd /c) or the next parameter (-Command): check that reading too.
+            # The first -Command reading is enough: a later one runs the end of the same text, and checking each
+            # would take quadratic time on a long chain of -wd /c
+            command_read = command_read or other == "command"
+            reason = check_powershell(args[k + 1:], dict(state), depth, stdin)
             if reason:
                 return reason
         # a value never starts with -: in pwsh 7, -i is the -Interactive switch, not -InputFormat
         k += 1 if nxt[:1] == "-" else 2
     if args[k:k + 1] == ["-"]:
-        return stdin
-    return check(" ".join(args[k:]), depth + 1, state, "powershell") if k < len(args) else None
+        return READS_STDIN
+    if k < len(args):
+        return check(" ".join(args[k:]), depth + 1, state, "powershell")
+    return READS_STDIN if stdin else None
 
 
-def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
+def check_segment(seg: list[str], state: dict, depth: int, stdin: bool = False) -> str | None:
+    if time.monotonic() - STARTED > TIME_LIMIT:
+        return "Checking this command took too long, so it can't be verified."
     rest = strip_prefix(seg)
     for t in seg[:len(seg) - len(rest)]:  # assignments can follow keywords and wrappers too: env HUSKY=0 git ...
         if HOOK_SKIP_ENV.match(t):
@@ -386,8 +436,10 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
         for k, a in enumerate(args):
             if (a in ("-c", "--command") or "c" in short_flags(a)) and k + 1 < len(args):
                 return check(args[k + 1], depth + 1, state)
+        if stdin and not shell_script(args):  # echo 'git push --force' | bash, bash <<'EOF'
+            return READS_STDIN
     if prog in POWERSHELLS:
-        return check_powershell(args, state, depth)
+        return check_powershell(args, state, depth, stdin)
     if prog == "cmd":
         for k, a in enumerate(args):
             m = re.match(r"/+[ckr]", a, re.I)  # Git Bash turns /c into a path, so it's written //c there; /cgit runs too
@@ -405,9 +457,9 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
 
 
 def ps_tokenize(cmd: str) -> list:
-    """PowerShell words, with SEP and GROUP for separators and brackets. Unlike the Bash path, quoting is tracked,
-    so a quoted ';' is a word. Backtick escapes (also inside "..."), '' is a quote inside '...', a backslash is an
-    ordinary character, and a backtick at the end of a line continues it."""
+    """PowerShell words, with SEP, PIPE and GROUP for separators, pipes and brackets. Unlike the Bash path, quoting
+    is tracked, so a quoted ';' is a word. Backtick escapes (also inside "..."), '' is a quote inside '...', a
+    backslash is an ordinary character, and a backtick at the end of a line continues it."""
     out, word, quoted, i = [], [], False, 0
 
     def end_word():
@@ -460,7 +512,7 @@ def ps_tokenize(cmd: str) -> list:
             i = j + 2
         elif c in ";|&\n(){}":
             end_word()
-            out.append(SEP if c in ";|&\n" else GROUP)
+            out.append(SEP if c in ";&\n" else PIPE if c == "|" else GROUP)
             i += 1
         else:
             word.append(c)
@@ -481,7 +533,7 @@ def strip_ps_assignment(seg: list[str]) -> list[str]:
     return seg
 
 
-def check_ps_segment(seg: list[str], state: dict, depth: int) -> str | None:
+def check_ps_segment(seg: list[str], state: dict, depth: int, stdin: bool = False) -> str | None:
     m = re.fullmatch(r"\$env:(\w+)=(.*)", "".join(seg), re.I | re.S)
     if m and HOOK_SKIP_ENV.match(f"{m.group(1).upper()}={m.group(2)}"):
         return f"Skipping git hooks via $env:{m.group(1)} is forbidden."
@@ -497,7 +549,7 @@ def check_ps_segment(seg: list[str], state: dict, depth: int) -> str | None:
         if not args:
             return "Invoke-Expression with piped input can't be verified."
         return check(" ".join(args), depth + 1, state, "powershell")
-    return check_segment(seg, state, depth)
+    return check_segment(seg, state, depth, stdin)
 
 
 def check_ps(cmd: str, depth: int, state: dict) -> str | None:
@@ -516,13 +568,13 @@ def check_ps(cmd: str, depth: int, state: dict) -> str | None:
     for grouping in (True, False):
         state.clear()
         state.update(start)
-        seg = []
+        seg, piped = [], False
         for t in tokens + [SEP]:
-            if t is SEP or (t is GROUP and grouping):
-                reason = check_ps_segment(seg, state, depth) if seg else None
+            if t is SEP or t is PIPE or (t is GROUP and grouping):
+                reason = check_ps_segment(seg, state, depth, piped) if seg else None
                 if reason:
                     return reason
-                seg = []
+                seg, piped = [], t is PIPE or (piped and not seg)
             elif t is not GROUP:
                 seg.append(t)
     return None
@@ -549,26 +601,27 @@ def check(cmd: str, depth: int = 0, state: dict | None = None, shell: str = "bas
     for braces in (False, True):
         state.clear()
         state.update(start)
-        for seg in segments(tokens, braces):
-            reason = check_segment([t.translate(RESTORE) for t in seg], state, depth)
+        for seg, piped in segments(tokens, braces):
+            seg, redirected = drop_stdin_redirects(seg)
+            reason = check_segment([t.translate(RESTORE) for t in seg], state, depth, piped or redirected)
             if reason:
                 return reason
     return None
 
 
 def main() -> int:
-    try:
+    cmd = ""
+    try:  # Claude Code runs the command on any exit code but 2, so a crash here must block
         data = json.loads(sys.stdin.buffer.read())  # bytes: Claude Code sends UTF-8, Windows would decode as cp1252
-    except Exception:
-        print("BLOCKED by build-crew guard: unreadable hook input.", file=sys.stderr)
-        return 2
-    shell = {"Bash": "bash", "PowerShell": "powershell"}.get(data.get("tool_name"))
-    if not shell:
-        return 0
-    cmd = (data.get("tool_input") or {}).get("command", "")
-    reason = check(cmd, shell=shell)
+        shell = {"Bash": "bash", "PowerShell": "powershell"}.get(data.get("tool_name"))
+        if not shell:
+            return 0
+        cmd = (data.get("tool_input") or {}).get("command", "")
+        reason = "Command too long to verify." if len(cmd) > MAX_COMMAND else check(cmd, shell=shell)
+    except Exception as e:
+        reason = f"Could not read or check this command ({type(e).__name__}), so it can't be verified."
     if reason:
-        print(f"BLOCKED by build-crew guard: {reason}\nCommand: {cmd.strip()[:300]}", file=sys.stderr)
+        print(f"BLOCKED by build-crew guard: {reason}\nCommand: {str(cmd).strip()[:300]}", file=sys.stderr)
         return 2
     return 0
 

@@ -160,9 +160,24 @@ BLOCKED = [
     "pwsh -wd /f -c 'git -C D:/repo push --force'",
     "pwsh -wd /c -enc ZwBpAHQA",
     "pwsh -wd /c -c 'git switch main' && git commit -m x",
-    # fails closed
-    "echo $(git status",
+    # comments end at the line's end, and only start a word
+    "# Let's reset\ngit reset --hard origin/feat/x\n# That's it",
+    "git push origin a#b --force",
+    # a shell running what it reads from stdin
+    "echo 'git push --force' | powershell -NoProfile",
+    "echo 'git push --force' | bash",
+    "echo 'git push --force' | sudo sh -s",
+    "echo 'git push --force' | bash -o pipefail",
+    "bash <<'EOF'\ngit push --force\nEOF",
+    "bash <<< 'git push --force'",
+    "pwsh -NoProfile <<'EOF'\ngit push --force\nEOF",
+    # nested backticks, and $'...' quoting
+    "echo `echo \\`git push --force\\``",
+    "git commit -m $'fix: don\\'t crash' --no-verify",
 ]
+
+# blocked because they can't be parsed, the only cases allowed to block that way
+UNPARSEABLE = ["echo $(git status"]
 
 ALLOWED = [
     "git push -u origin feat/resume-export",
@@ -219,6 +234,12 @@ ALLOWED = [
     "cmd /c dir",
     "pwsh -wd /c/Users/me/repo -c 'git status'",
     "pwsh -wd /c -c 'git status'",
+    "git rebase origin/main  # (then git push --force-with-lease)",
+    "git status # it's fine",
+    "git commit -m $'fix: don\\'t crash'",
+    "cat files.txt | bash scripts/each.sh",
+    "echo hi | pwsh -c 'Write-Output $input'",
+    "pwsh --version",
 ]
 
 # commands from Claude Code's PowerShell tool
@@ -280,10 +301,10 @@ PS_BLOCKED = [
     "[string]$a = $b = git push -f",
     "$log += git push --force",
     "rm -rf ~",
-    # fails closed
-    "git commit -m 'unbalanced",
-    "git push --force`",
+    "'git push --force' | powershell -NoProfile",
 ]
+
+PS_UNPARSEABLE = ["git commit -m 'unbalanced", "git push --force`"]
 
 PS_ALLOWED = [
     "git status",
@@ -318,9 +339,13 @@ def payload(cmd: str, tool: str = "Bash") -> bytes:
     return json.dumps({"tool_name": tool, "tool_input": {"command": cmd}}, ensure_ascii=False).encode("utf-8")
 
 
-def guard(cmd: str, tool: str = "Bash", cwd=None) -> int:
+def run_guard(cmd: str, tool: str = "Bash", cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(HOOKS / "guard.py")], input=payload(cmd, tool),
-                          capture_output=True, cwd=cwd).returncode
+                          capture_output=True, cwd=cwd)
+
+
+def guard(cmd: str, tool: str = "Bash", cwd=None) -> int:
+    return run_guard(cmd, tool, cwd).returncode
 
 
 @pytest.fixture
@@ -331,7 +356,8 @@ def feature_repo(repo):
 
 @pytest.mark.parametrize("cmd", BLOCKED)
 def test_blocks(cmd, feature_repo):
-    assert guard(cmd, cwd=feature_repo) == 2
+    res = run_guard(cmd, cwd=feature_repo)
+    assert res.returncode == 2 and b"Could not parse" not in res.stderr  # blocked for what it does
 
 
 @pytest.mark.parametrize("cmd", ALLOWED)
@@ -341,12 +367,19 @@ def test_allows(cmd, feature_repo):
 
 @pytest.mark.parametrize("cmd", PS_BLOCKED)
 def test_blocks_powershell(cmd, feature_repo):
-    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 2
+    res = run_guard(cmd, "PowerShell", feature_repo)
+    assert res.returncode == 2 and b"Could not parse" not in res.stderr
 
 
 @pytest.mark.parametrize("cmd", PS_ALLOWED)
 def test_allows_powershell(cmd, feature_repo):
     assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 0
+
+
+@pytest.mark.parametrize("tool,cmd", [("Bash", c) for c in UNPARSEABLE] + [("PowerShell", c) for c in PS_UNPARSEABLE])
+def test_blocks_what_it_cannot_parse(tool, cmd, feature_repo):
+    res = run_guard(cmd, tool, feature_repo)
+    assert res.returncode == 2 and b"Could not parse" in res.stderr
 
 
 def test_powershell_tracks_branch(repo):
@@ -387,6 +420,24 @@ def test_fails_closed():
     res = subprocess.run([sys.executable, str(HOOKS / "guard.py")], input="not json", text=True, capture_output=True)
     assert res.returncode == 2
     assert guard("git commit -m 'unbalanced") == 2
+
+
+def test_blocks_when_the_check_crashes():
+    # a crash would exit 1, which Claude Code treats as a non-blocking error and runs the command
+    bad = json.dumps({"tool_name": "Bash", "tool_input": {"command": ["git", "push", "--force"]}}).encode()
+    res = subprocess.run([sys.executable, str(HOOKS / "guard.py")], input=bad, capture_output=True)
+    assert res.returncode == 2 and b"TypeError" in res.stderr
+
+
+def test_blocks_commands_too_long_or_slow_to_check(monkeypatch):
+    # if the hook times out, Claude Code runs the command
+    res = run_guard("git status && " * 10_000)
+    assert res.returncode == 2 and b"too long" in res.stderr
+    monkeypatch.syspath_prepend(str(HOOKS))
+    import guard as g
+    assert g.check("git status") is None
+    monkeypatch.setattr(g, "STARTED", g.STARTED - g.TIME_LIMIT - 1)
+    assert "took too long" in g.check("git status")
 
 
 def hook_command() -> str:
