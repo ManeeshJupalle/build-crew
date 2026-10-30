@@ -57,6 +57,8 @@ def test_install_is_idempotent_and_renders_paths(home):
     assert len(s["hooks"]["SessionStart"]) == 1
     cmds = [h["command"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
     assert our_guard(cmds) == 1
+    ours = [g["matcher"] for g in s["hooks"]["PreToolUse"] if our_guard(h["command"] for h in g["hooks"])]
+    assert ours == ["Bash|PowerShell"]
     for f in (home / ".claude/agents").glob("*.md"):
         text = f.read_text(encoding="utf-8")
         assert "CLAUDE_PLUGIN_ROOT" not in text and "`build-crew:" not in text

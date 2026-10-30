@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""guard: PreToolUse hook that blocks destructive git / gh / rm commands.
+"""guard: PreToolUse hook that blocks destructive git / gh / rm commands from the Bash and PowerShell tools.
 
 It parses the command into shell words instead of pattern-matching raw text, so
   - quoted text such as commit messages can't trigger it ("docs: explain --no-verify"),
   - git global options can't hide it (git -C . push --force),
   - chained, grouped, nested and substituted commands are checked
     (&&, ;, |, if/then, { }, bash -c, pwsh -c, cmd /c, $(...)).
+PowerShell commands get their own tokenizer, since its quoting and escapes differ from Bash.
 
 Exit 2 = block (stderr is shown to Claude). Exit 0 = allow.
 This is a seatbelt, not a sandbox: see "Limits" in the README.
@@ -32,6 +33,11 @@ PS_VALUE_PARAMS = ("executionpolicy", "windowstyle", "inputformat", "outputforma
 PS_VALUE_ALIASES = {"ep", "ex", "w", "wd", "o", "of", "i", "if", "v"}
 DANGEROUS_RM_TARGETS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "$HOME/*",
                         ".", "./", "./*", "..", "../", "*", ".*"}
+WINDOWS_ROOTS = re.compile(r"([a-z]:|\$env:(userprofile|home))(/\*?)?", re.I)  # C:\, $env:USERPROFILE\*
+PS_REMOVE = {"remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"}
+PS_QUOTES = {"'": "'", "‘": "'", "’": "'", "‚": "'", "‛": "'", '"': '"', "“": '"', "”": '"', "„": '"'}
+PS_HERESTRING = re.compile(r"@(['\"])[ \t]*\r?\n.*?\r?\n\1@", re.S)
+SEP, GROUP = object(), object()  # PowerShell tokens: ; | & newline, and ( ) { }
 
 
 def current_branch() -> str:
@@ -237,7 +243,24 @@ def check_rm(args: list[str]) -> str | None:
         return None
     targets = [a for a in args if not a.startswith("-") or a == "-"]
     for t in targets:
-        if t.rstrip("/") in {x.rstrip("/") for x in DANGEROUS_RM_TARGETS} or t in DANGEROUS_RM_TARGETS:
+        if dangerous_target(t):
+            return f"Recursive delete of '{t}' is forbidden."
+    return None
+
+
+def dangerous_target(t: str) -> bool:
+    t = t.replace("\\", "/")
+    return (t.rstrip("/") in {x.rstrip("/") for x in DANGEROUS_RM_TARGETS} or t in DANGEROUS_RM_TARGETS
+            or bool(WINDOWS_ROOTS.fullmatch(t)))
+
+
+def check_remove_item(args: list[str]) -> str | None:
+    """PowerShell's Remove-Item and its aliases. Parameters ignore case and can be shortened (-r, -Rec)."""
+    if not any(len(a) > 1 and a[0] == "-" and a[1] != ":" and "recurse".startswith(a[1:].split(":")[0].lower())
+               for a in args):
+        return None
+    for t in args:
+        if not t.startswith("-") and dangerous_target(t):
             return f"Recursive delete of '{t}' is forbidden."
     return None
 
@@ -258,7 +281,7 @@ def check_powershell(args: list[str], state: dict, depth: int) -> str | None:
             return None
         takes_value = name in PS_VALUE_ALIASES or (len(name) > 1 and any(p.startswith(name) for p in PS_VALUE_PARAMS))
         k += 2 if takes_value else 1
-    return check(" ".join(args[k:]), depth + 1, state) if k < len(args) else None
+    return check(" ".join(args[k:]), depth + 1, state, "powershell") if k < len(args) else None
 
 
 def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
@@ -295,10 +318,120 @@ def check_segment(seg: list[str], state: dict, depth: int) -> str | None:
     return None
 
 
-def check(cmd: str, depth: int = 0, state: dict | None = None) -> str | None:
+def ps_tokenize(cmd: str) -> list:
+    """PowerShell words, with SEP and GROUP for separators and brackets. Unlike the Bash path, quoting is tracked,
+    so a quoted ';' is a word. Backtick escapes (also inside "..."), '' is a quote inside '...', a backslash is an
+    ordinary character, and a backtick at the end of a line continues it."""
+    out, word, quoted, i = [], [], False, 0
+
+    def end_word():
+        nonlocal word, quoted
+        if word or quoted:
+            out.append("".join(word))
+        word, quoted = [], False
+
+    while i < len(cmd):
+        c = cmd[i]
+        if c == "`":
+            nxt = cmd[i + 1:i + 2]
+            if not nxt:
+                raise ValueError("trailing backtick")
+            if nxt in "\r\n":
+                end_word()
+                i += 3 if cmd.startswith("\r\n", i + 1) else 2
+            else:
+                word.append(nxt)
+                i += 2
+        elif c in PS_QUOTES:
+            q, i, quoted = PS_QUOTES[c], i + 1, True
+            while True:
+                if i >= len(cmd):
+                    raise ValueError("unbalanced quotes")
+                d = cmd[i]
+                if PS_QUOTES.get(d) == q:
+                    if PS_QUOTES.get(cmd[i + 1:i + 2]) == q:  # '' or "" inside the quotes is one quote
+                        word.append(d)
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                if q == '"' and d == "`" and i + 1 < len(cmd):
+                    word.append(cmd[i + 1])
+                    i += 2
+                    continue
+                word.append(d)
+                i += 1
+        elif c in " \t\r,":
+            end_word()
+            i += 1
+        elif c == "#" and not word and not quoted:  # a comment runs to the end of the line
+            j = cmd.find("\n", i)
+            i = j if j >= 0 else len(cmd)
+        elif cmd.startswith("<#", i) and not word and not quoted:
+            j = cmd.find("#>", i + 2)
+            if j < 0:
+                raise ValueError("unclosed comment")
+            i = j + 2
+        elif c in ";|&\n(){}":
+            end_word()
+            out.append(SEP if c in ";|&\n" else GROUP)
+            i += 1
+        else:
+            word.append(c)
+            i += 1
+    end_word()
+    return out
+
+
+def check_ps_segment(seg: list[str], state: dict, depth: int) -> str | None:
+    m = re.fullmatch(r"\$env:(\w+)=(.*)", "".join(seg), re.I | re.S)
+    if m and HOOK_SKIP_ENV.match(f"{m.group(1).upper()}={m.group(2)}"):
+        return f"Skipping git hooks via $env:{m.group(1)} is forbidden."
+    prog = prog_name(seg[0])
+    if prog in PS_REMOVE:
+        return check_remove_item(seg[1:])
+    if prog in ("iex", "invoke-expression"):
+        args = [a for a in seg[1:] if not (len(a) > 1 and a[0] == "-" and "command".startswith(a[1:].lower()))]
+        if not args:
+            return "Invoke-Expression with piped input can't be verified."
+        return check(" ".join(args), depth + 1, state, "powershell")
+    return check_segment(seg, state, depth)
+
+
+def check_ps(cmd: str, depth: int, state: dict) -> str | None:
+    # $(...) runs even inside "..." and @"..."@ (inside '...' it's checked too, to be safe)
+    for inner in re.findall(r"\$\(([^()]*)\)", cmd):
+        reason = check(inner, depth + 1, state, "powershell")
+        if reason:
+            return reason
+    try:
+        tokens = ps_tokenize(PS_HERESTRING.sub("''", cmd))  # here-strings are data, like heredocs
+    except ValueError:
+        return "Could not parse this command (unbalanced quotes?), so it can't be verified."
+    # ( ) and { } group commands (if ($?) { git push }) but also wrap arguments (git commit -m (Get-Date) --no-verify),
+    # so check both ways, each from the same starting branch
+    start = dict(state)
+    for grouping in (True, False):
+        state.clear()
+        state.update(start)
+        seg = []
+        for t in tokens + [SEP]:
+            if t is SEP or (t is GROUP and grouping):
+                reason = check_ps_segment(seg, state, depth) if seg else None
+                if reason:
+                    return reason
+                seg = []
+            elif t is not GROUP:
+                seg.append(t)
+    return None
+
+
+def check(cmd: str, depth: int = 0, state: dict | None = None, shell: str = "bash") -> str | None:
     if depth > 3:
         return "Command nesting too deep to verify."
     state = {} if state is None else state
+    if shell == "powershell":
+        return check_ps(cmd, depth, state)
     cmd = strip_heredocs(cmd)
     # commands inside $(...) and backticks run too
     for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", cmd):
@@ -328,10 +461,11 @@ def main() -> int:
     except Exception:
         print("BLOCKED by build-crew guard: unreadable hook input.", file=sys.stderr)
         return 2
-    if data.get("tool_name") != "Bash":
+    shell = {"Bash": "bash", "PowerShell": "powershell"}.get(data.get("tool_name"))
+    if not shell:
         return 0
     cmd = (data.get("tool_input") or {}).get("command", "")
-    reason = check(cmd)
+    reason = check(cmd, shell=shell)
     if reason:
         print(f"BLOCKED by build-crew guard: {reason}\nCommand: {cmd.strip()[:300]}", file=sys.stderr)
         return 2

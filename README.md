@@ -100,7 +100,6 @@ See [examples/HOW_IT_WORKS.md](examples/HOW_IT_WORKS.md) and [examples/PLAN.md](
 Gates make the important checks repeatable and visible. They are not a security boundary against a determined model, so you should know where the edges are:
 
 - **The guard is a seatbelt, not a sandbox.** It stops the mistakes agents actually make. A command written specifically to evade it (an obfuscated script, or a file it writes and then runs) can get past. Use branch protection on GitHub for hard guarantees.
-- **The guard checks the Bash tool only.** On Windows, commands Claude runs through its PowerShell tool aren't checked yet (#11).
 - **The reviewer and the builder share your GitHub account.** `merge_gate` ignores verdicts from other accounts, but it can't tell the reviewer agent from the main session. Branch protection with required human reviews closes that gap.
 - **"Read-only" agents still have Bash** to run `gh` and `git`. They have no Write/Edit tools, and their instructions forbid changes, but that part is enforced by the prompt, not by code.
 - **PLAN.md is editable.** A phase is "done" when its Done-when commands pass, but those commands live in a file the AI can edit. The reviewer flags changes to Done-when lines and phase ticks, and they show up in the PR diff.

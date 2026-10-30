@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -124,6 +125,9 @@ BLOCKED = [
     "git commit -m \"}\" --no-verify",
     "git push origin } --force",
     "gh api --jq '{}' -X PUT repos/o/r/pulls/7/merge",
+    # PowerShell payloads are parsed as PowerShell
+    "pwsh -c 'git push --f`orce'",
+    "pwsh -c 'npm test; if ($?) { git push --force }'",
 ]
 
 ALLOWED = [
@@ -169,6 +173,87 @@ ALLOWED = [
     # switching to main after the work is done
     "git commit -m 'feat: x' && git switch main",
     "git push && git checkout main && git pull",
+    "powershell -c 'Get-ChildItem \"D:\\\"'",
+]
+
+# commands from Claude Code's PowerShell tool
+PS_BLOCKED = [
+    "git push --force",
+    "git push origin main",
+    "git reset --hard; Write-Host done",
+    "gh pr merge 7",
+    # chaining and blocks (PowerShell 5.1 has no &&, so Claude chains with if ($?))
+    "npm test; if ($?) { git push --force }",
+    "npm test && git push --force",
+    "try { git push -f } catch { }",
+    "foreach ($b in 'x') { git push -f }",
+    "& { git reset --hard }",
+    "& git push --force",
+    "& 'C:\\Program Files\\Git\\cmd\\git.exe' push --force",
+    "git status # look\ngit push --force",
+    "<# note #> git push --force",
+    # escapes and quoting
+    "git push --f`orce",
+    "git push `\n  --force",
+    "git push `\r\n  --force",
+    "git push \"--force\"",
+    "git push “--force”",
+    "git commit -m 'it''s done' --no-verify",
+    "git commit -m \"say `\"hi`\"\" --no-verify",
+    "git commit -m ';' --no-verify",
+    "git commit -m '(' --no-verify",
+    "git commit -m @'\nfix: x\n'@ --no-verify",
+    # subexpressions
+    "git commit -m (Get-Content msg.txt) --no-verify",
+    "git push origin $(git branch --show-current) --force",
+    "Write-Output \"$(git push --force)\"",
+    "Write-Output @\"\n$(git reset --hard)\n\"@",
+    # skipping hooks
+    "$env:HUSKY=0",
+    "$env:HUSKY = '0'; git commit -m x",
+    "$Env:husky=0",
+    "$env:SKIP = 'lint'",
+    # recursive deletes
+    "Remove-Item -Recurse -Force ~",
+    "Remove-Item C:\\ -Recurse",
+    "ri -r -fo $env:USERPROFILE",
+    "rm -Recurse .\\",
+    "Remove-Item -Path $HOME\\* -Recurse:$true",
+    # nested commands
+    "iex 'git push --force'",
+    "Invoke-Expression -Command \"git reset --hard\"",
+    "'git push --force' | iex",
+    "bash -c 'git push --force'",
+    "cmd /c \"git push --force\"",
+    "pwsh -c { git push --force }",
+    "powershell -Command \"& {git push --force}\"",
+    # fails closed
+    "git commit -m 'unbalanced",
+    "git push --force`",
+]
+
+PS_ALLOWED = [
+    "git status",
+    "git push -u origin feat/x",
+    "Get-ChildItem \"D:\\\"",
+    "git commit -m 'docs: explain why we never use --no-verify'",
+    "git commit -m \"fix: it's `\"quoted`\"\"",
+    "git commit -m 'it''s fine'",
+    "git commit -m 'a; b' -m '(c)'",
+    "npm test; if ($?) { git push -u origin feat/x }",
+    "if (Test-Path x) { git push -u origin feat/x }",
+    "git commit -m @'\nfix: don't use git push --force\n'@",
+    "git commit -m @\"\nfeat: x; y\n\"@",
+    "git push -u origin $(git branch --show-current)",
+    "Remove-Item -Recurse -Force node_modules",
+    "Remove-Item -Force .",
+    "rm .\\dist -Recurse",
+    "$env:NODE_ENV = 'test'; npm test",
+    "git log --oneline -5 | Select-Object -First 3",
+    "Get-Content log.txt # git push --force",
+    "Write-Output 'git push --force'",
+    "pwsh -NoProfile -File build.ps1",
+    "git commit -m 'feat: x' && git switch main",
 ]
 
 
@@ -196,6 +281,21 @@ def test_blocks(cmd, feature_repo):
 @pytest.mark.parametrize("cmd", ALLOWED)
 def test_allows(cmd, feature_repo):
     assert guard(cmd, cwd=feature_repo) == 0
+
+
+@pytest.mark.parametrize("cmd", PS_BLOCKED)
+def test_blocks_powershell(cmd, feature_repo):
+    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 2
+
+
+@pytest.mark.parametrize("cmd", PS_ALLOWED)
+def test_allows_powershell(cmd, feature_repo):
+    assert guard(cmd, tool="PowerShell", cwd=feature_repo) == 0
+
+
+def test_powershell_tracks_branch(repo):
+    assert guard("git commit -m x", tool="PowerShell", cwd=repo) == 2  # on main
+    assert guard("git switch -c feat/y; if ($?) { git commit -m 'feat: y' }", tool="PowerShell", cwd=repo) == 0
 
 
 def test_blocks_commit_and_bare_push_on_protected_branch(repo):
@@ -239,9 +339,16 @@ def hook_command() -> str:
     return hooks[0]["hooks"][0]["command"].replace("${CLAUDE_PLUGIN_ROOT}", ROOT.as_posix())
 
 
-@pytest.mark.parametrize("cmd,code", [("git push --force", 2), ("git push", 0)])
-def test_hook_command_finds_python_on_this_os(feature_repo, cmd, code):
-    res = subprocess.run([BASH, "-c", hook_command()], input=payload(cmd), capture_output=True, cwd=feature_repo)
+def test_hook_matches_bash_and_powershell():
+    matcher = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["matcher"]
+    assert all(re.fullmatch(matcher, tool) for tool in ("Bash", "PowerShell"))
+
+
+@pytest.mark.parametrize("tool,cmd,code", [("Bash", "git push --force", 2), ("Bash", "git push", 0),
+                                           ("PowerShell", "git push --force", 2), ("PowerShell", "git push", 0)])
+def test_hook_command_finds_python_on_this_os(feature_repo, tool, cmd, code):
+    res = subprocess.run([BASH, "-c", hook_command()], input=payload(cmd, tool), capture_output=True,
+                         cwd=feature_repo)
     assert res.returncode == code, res.stderr
 
 
