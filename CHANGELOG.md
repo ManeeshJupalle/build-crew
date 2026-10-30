@@ -7,7 +7,7 @@
 - Tested on Python 3.14 as well as 3.9 and 3.13, on macOS, Linux and Windows. (#15, by @Vamsi-2581)
 
 ### Fixed
-- `checks.py` runs pytest in a repo whose only Python is a `tests/` folder (`conftest.py`, `test_*.py` or `*_test.py`), when no other stack or Makefile matched. Before, it reported NOT VERIFIED. (#17, by @babyhuey)
+- `checks.py` runs `pytest -q` in a Python repo with no `pyproject.toml`, `setup.py` or `requirements*.txt` (Pipenv, conda or plain scripts), when `conftest.py`, `test_*.py` or `*_test.py` sits directly in `tests/` and no other stack or Makefile target matched. Before, it reported NOT VERIFIED. (#17, by @babyhuey)
 
 ### Security
 - `secret_scan` catches GitLab personal access tokens (`glpat-`), npm tokens (`npm_`) and Hugging Face tokens (`hf_`). (#10, by @babyhuey)
