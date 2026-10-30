@@ -7,8 +7,8 @@
     "name": "Maneesh Jupalle",
     "url": "https://github.com/ManeeshJupalle"
   },
-  "homepage": "https://github.com/ManeeshJupalle/build-crew",
-  "repository": "https://github.com/ManeeshJupalle/build-crew",
+  "homepage": "https://github.com/ManeeshJupalle/claude-build-crew",
+  "repository": "https://github.com/ManeeshJupalle/claude-build-crew",
   "license": "MIT",
   "keywords": ["agents", "workflow", "pull-requests", "code-review", "ci", "release", "deploy"]
 }

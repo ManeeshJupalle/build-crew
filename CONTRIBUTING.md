@@ -8,7 +8,7 @@ Thanks for helping! The one rule: **if it must be true, make it code.** Put judg
 
 ## Setup
 ```bash
-git clone https://github.com/ManeeshJupalle/build-crew && cd build-crew
+git clone https://github.com/ManeeshJupalle/claude-build-crew && cd claude-build-crew
 pip install -r requirements-dev.txt
 pytest -q                      # ~15s, no network, no GitHub account needed (Windows: run in Git Bash)
 claude --plugin-dir .          # try your changes live in Claude Code

@@ -11,14 +11,14 @@ Agents read the code. The few docs that exist are for people who want to underst
 
 **As a plugin (recommended)**, from inside Claude Code:
 ```
-/plugin marketplace add ManeeshJupalle/build-crew
+/plugin marketplace add ManeeshJupalle/claude-build-crew
 /plugin install build-crew@build-crew
 ```
 Plugin commands are namespaced, e.g. `/build-crew:ship`.
 
 **Or manually**, globally for every project, with plain `/ship`-style names:
 ```bash
-git clone https://github.com/ManeeshJupalle/build-crew && ./build-crew/install.sh
+git clone https://github.com/ManeeshJupalle/claude-build-crew && ./claude-build-crew/install.sh
 ```
 You need the [GitHub CLI](https://cli.github.com) (`gh auth login`), git, and Python 3.9+. Works on macOS, Linux and Windows (in Git Bash, which Claude Code on Windows already uses).
 
