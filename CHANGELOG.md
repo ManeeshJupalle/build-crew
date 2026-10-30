@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-30
+### Changed
+- The repo is now `ManeeshJupalle/claude-build-crew`, so the install command is `/plugin marketplace add ManeeshJupalle/claude-build-crew`. The old name redirects, and the plugin is still called `build-crew`. (#23)
+
+### Fixed
+- `secret_scan` no longer flags `npm_` text inside a longer word, that is with a letter, digit or `_` right before `npm_` or right after its 36 characters. Real npm tokens are still caught. (#21, by @ungaaaabungaaa)
+
 ## [0.3.0] - 2026-10-29
 ### Changed
 - Tested on Python 3.14 as well as 3.9 and 3.13, on macOS, Linux and Windows. (#15, by @Vamsi-2581)
