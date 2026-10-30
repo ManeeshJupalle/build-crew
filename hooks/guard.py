@@ -505,6 +505,10 @@ def check_segment(seg: list[str], state: dict, depth: int, stdin: bool = False) 
     return None
 
 
+class Quoted(str):
+    """A PowerShell word that starts with a quote: first in ( ), it makes a value ('--force'), not a command."""
+
+
 def ps_subexpr_end(cmd: str, i: int) -> int:
     """Index just past the ) that closes the $( at i, or -1. Quotes and backtick escapes inside are skipped."""
     j, depth = i + 2, 1
@@ -547,13 +551,13 @@ def ps_tokenize(cmd: str) -> tuple[list, list[str]]:
     $(...) in "..." and @"..."@, which run. Unlike the Bash path, quoting is tracked, so a quoted ';' is a word.
     Backtick escapes (also inside "..."), '' is a quote inside '...', a backslash is an ordinary character, a
     backtick at the end of a line continues it, and a here-string is one word."""
-    out, inner, word, quoted, i, closers = [], [], [], False, 0, {}
+    out, inner, word, quoted, lead, i, closers = [], [], [], False, False, 0, {}
 
     def end_word():
-        nonlocal word, quoted
+        nonlocal word, quoted, lead
         if word or quoted:
-            out.append("".join(word))
-        word, quoted = [], False
+            out.append(Quoted("".join(word)) if lead else "".join(word))
+        word, quoted, lead = [], False, False
 
     while i < len(cmd):
         c = cmd[i]
@@ -568,11 +572,13 @@ def ps_tokenize(cmd: str) -> tuple[list, list[str]]:
                 word.append(nxt)
                 i += 2
         elif c == "@" and (h := ps_herestring(cmd, i, closers)):  # @'...'@ is literal, @"..."@ runs its $(...)
+            lead = lead or not (word or quoted)
             q, text, i = h
             word.append(text)
             quoted = True
             inner += ps_subexprs(text) if q == '"' else []
         elif c in PS_QUOTES:
+            lead = lead or not (word or quoted)
             q, i, quoted = PS_QUOTES[c], i + 1, True
             while True:
                 if i >= len(cmd):
@@ -638,15 +644,29 @@ def strip_ps_assignment(seg: list[str]) -> tuple[list[str], list[str]]:
 
 
 def check_set_env(args: list[str]) -> str | None:
-    """Set-Item env:HUSKY 0 sets a variable, like $env:HUSKY = 0."""
-    for a in args:
-        m = re.fullmatch(r"env:[\\/]?(\w+)", a, re.I)
-        if m and any(HOOK_SKIP_ENV.match(f"{m.group(1).upper()}={v}") for v in args if v[:1] != "-" and v is not a):
-            return f"Skipping git hooks via env:{m.group(1)} is forbidden."
+    """Set-Item env:HUSKY 0 sets a variable, like $env:HUSKY = 0. The path and value come from -Path (or
+    -LiteralPath) and -Value, also written -Value:0, and otherwise from the first two other arguments."""
+    bound, positional, k = {}, [], 0
+    while k < len(args):
+        a, k = args[k], k + 1
+        name, colon, value = a[1:].partition(":")
+        name = name.lower()
+        if a[:1] != "-" or not name:
+            positional.append(a)
+        elif any(p.startswith(name) for p in ("path", "literalpath", "value")):
+            if not colon:
+                value, k = (args[k] if k < len(args) else ""), k + 1
+            bound["value" if "value".startswith(name) else "path"] = value
+    for slot, value in zip([p for p in ("path", "value") if p not in bound], positional):
+        bound[slot] = value
+    m = re.fullmatch(r"env:[\\/]?(\w+)", bound.get("path", ""), re.I)
+    if m and HOOK_SKIP_ENV.match(f"{m.group(1).upper()}={bound.get('value', '')}"):
+        return f"Skipping git hooks via env:{m.group(1)} is forbidden."
     return None
 
 
 def check_ps_segment(seg: list[str], state: dict, depth: int, stdin: bool = False) -> str | None:
+    check_time()
     targets, seg = strip_ps_assignment(seg)
     for t in targets:  # $env:HUSKY = 0, also as $a = $env:HUSKY = 0
         m = re.fullmatch(r"\$\{?env:(\w+)\}?", t, re.I)
@@ -669,6 +689,13 @@ def check_ps_segment(seg: list[str], state: dict, depth: int, stdin: bool = Fals
     return check_segment(seg, state, depth, stdin)
 
 
+def ps_command_word(words: list) -> bool:
+    """Whether a group starting with these words holds a command (Join-Path, git, .\\build.ps1) rather than a value
+    ('x', $x, 1, -not $y)."""
+    return bool(words) and isinstance(words[0], str) and not isinstance(words[0], Quoted) and \
+        bool(re.match(r"[A-Za-z_.\\/]", words[0]))
+
+
 def check_ps(cmd: str, depth: int, state: dict) -> str | None:
     try:
         tokens, inner = ps_tokenize(cmd)
@@ -679,17 +706,21 @@ def check_ps(cmd: str, depth: int, state: dict) -> str | None:
         if reason:
             return reason
     # ( ) and { } group commands (if ($?) { git push }) but also wrap arguments (git commit -m (Get-Date) --no-verify),
-    # so check both ways, each from the same starting branch. Read as an argument, a whole group is one word.
+    # so check both ways, each from the same starting branch. Read as an argument, a group holding a command,
+    # (Join-Path $HOME x), is one word: its output. A group holding a value, ('--force') or ($HOME), is that value.
     start = dict(state)
     for grouping in (True, False):
         state.clear()
         state.update(start)
-        seg, piped, nested = [], False, 0
-        for t in tokens + [None]:  # None ends the last command
-            if not grouping and t is not None and (nested or t is OPEN or t is CLOSE):
-                if t is OPEN and not nested:
-                    seg.append(SUBST)
-                nested = max(nested + (t is OPEN) - (t is CLOSE), 0)
+        seg, piped, skip = [], False, 0
+        for n, t in enumerate(tokens + [None]):  # None ends the last command
+            if skip and t is not None:
+                skip += (t is OPEN) - (t is CLOSE)
+            elif not grouping and t is OPEN and ps_command_word(tokens[n + 1:n + 2]):
+                seg.append(SUBST)
+                skip = 1
+            elif not grouping and (t is OPEN or t is CLOSE):
+                continue
             elif isinstance(t, str):
                 seg.append(t)
             else:

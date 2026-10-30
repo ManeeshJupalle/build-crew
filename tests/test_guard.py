@@ -328,6 +328,17 @@ PS_BLOCKED = [
     "$x, $y = git push --force",
     "$x ??= git push --force",
     "$a = $env:HUSKY = 0",
+    # from the review of #36: a group holding a value is that value
+    "git push origin ('--force')",
+    "git push $('--force')",
+    "git push @('--force')",
+    "git push origin ('--force', 'x')",
+    "& ('git') push --force",
+    "Remove-Item -Recurse -Force ('~')",
+    "git push origin ('main')",
+    "pwsh -c ('git push --force')",
+    "$env:HUSKY = (0)",
+    "Set-Item env:HUSKY -Value:0",
 ]
 
 PS_UNPARSEABLE = ["git commit -m 'unbalanced", "git push --force`"]
@@ -374,6 +385,7 @@ PS_ALLOWED = [
     "$x = 'HUSKY=0'",
     "$line = \"SKIP=lint\"",
     "Set-Item env:NODE_ENV test",
+    "Set-Content -Path notes.txt -Value env:SKIP",
 ]
 
 
@@ -476,7 +488,8 @@ def test_blocks_commands_too_long_or_slow_to_check(monkeypatch):
     # if the hook times out, Claude Code runs the command
     res = run_guard("git status && " * 10_000)
     assert res.returncode == 2 and b"too long" in res.stderr
-    for cmd, tool in (("cat <<" + "A" * 99_000, "Bash"), ("cat <<A\n" * 12_000, "Bash"), ("@'\n" * 30_000, "PowerShell")):
+    for cmd, tool in (("cat <<" + "A" * 99_000, "Bash"), ("cat <<A\n" * 12_000, "Bash"), ("@'\n" * 30_000, "PowerShell"),
+                      ("si" + " env:A" * 16_000 + "; git push --force", "PowerShell")):
         start = time.monotonic()
         run_guard(cmd, tool)
         assert time.monotonic() - start < 10, cmd[:10]  # no regex that rescans the rest of the command
@@ -485,7 +498,8 @@ def test_blocks_commands_too_long_or_slow_to_check(monkeypatch):
     monkeypatch.setattr(g, "STARTED", time.monotonic())
     assert g.check("git status") is None
     monkeypatch.setattr(g, "STARTED", time.monotonic() - g.TIME_LIMIT - 1)
-    for slow in (lambda: g.check("git status"), g.current_branch, lambda: g.local_branch_exists("x")):
+    for slow in (lambda: g.check("git status"), lambda: g.check("rm x", shell="powershell"), g.current_branch,
+                 lambda: g.local_branch_exists("x")):
         with pytest.raises(TimeoutError):
             slow()
 
